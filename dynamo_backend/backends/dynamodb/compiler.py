@@ -160,6 +160,12 @@ def _to_dynamo_value(field, value):
     if isinstance(value, Decimal):
         return value
 
+    # uuid.UUID on non-UUID fields (e.g. LogEntry.object_id is TextField but
+    # Django passes object.pk which may be a uuid.UUID — convert to string so
+    # boto3's TypeSerializer doesn't raise TypeError)
+    if isinstance(value, uuid.UUID):
+        return str(value)
+
     return value
 
 
