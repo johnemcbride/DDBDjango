@@ -77,8 +77,8 @@ class DatabaseCreation(BaseDatabaseCreation):
 
             gsi_attrs: set[str] = set()
             for field in model._meta.get_fields():
-                # Check db_index or ForeignKey
-                is_indexed = getattr(field, "db_index", False)
+                # Check db_index, unique=True or ForeignKey
+                is_indexed = getattr(field, "db_index", False) or getattr(field, "unique", False)
                 is_fk = isinstance(field, ForeignKey)
                 if (is_indexed or is_fk) and hasattr(field, "attname"):
                     col = field.attname
