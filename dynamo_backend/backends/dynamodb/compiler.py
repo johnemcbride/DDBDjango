@@ -25,6 +25,8 @@ batch_chunk_size  int   default 25      BatchGetItem chunk size (max 100)
 
 from __future__ import annotations
 
+import hashlib
+import threading
 import time
 import uuid
 from decimal import Decimal
@@ -64,6 +66,32 @@ def _pk_col(model) -> str:
 
 def _option(connection, key, default):
     return connection.settings_dict.get("OPTIONS", {}).get(key, default)
+
+
+# ── Process-level scan cursor cache ──────────────────────────────────────────
+# Maps (table_name, filter_hash) → {absolute_item_offset: LastEvaluatedKey}.
+# Lets admin list pages skip re-scanning rows already consumed by earlier pages:
+# page 4 (offset=150) finds the cursor saved when pages 1-3 were loaded and
+# calls Scan(ExclusiveStartKey=<cursor>, ...) instead of scanning from item 0.
+#
+# Cursors are evicted when any write (INSERT/UPDATE/DELETE) touches the table.
+
+_SCAN_CURSORS: dict[tuple[str, str], dict[int, dict]] = {}
+_SCAN_CURSOR_LOCK = threading.Lock()
+_MAX_CURSOR_OFFSETS = 512   # max saved checkpoints per (table, filter) pair
+
+
+def _filter_hash(conditions: list) -> str:
+    """Stable 16-char hex hash of the filter conditions (shape + values)."""
+    return hashlib.md5(repr(conditions).encode(), usedforsecurity=False).hexdigest()[:16]
+
+
+def _evict_scan_cursors(table_name: str) -> None:
+    """Invalidate all saved scan cursors for *table_name* (called on writes)."""
+    with _SCAN_CURSOR_LOCK:
+        stale = [k for k in _SCAN_CURSORS if k[0] == table_name]
+        for k in stale:
+            del _SCAN_CURSORS[k]
 
 
 def _record(op: str, connection, model, t0: float, count: int, **details) -> None:
@@ -683,42 +711,102 @@ def _do_m2m_join(connection, query, through_table_name: str, through_conditions:
     return _do_batch_get(connection, target_model, pk_values)
 
 
-def _do_scan(connection, model, conditions: list, scan_limit: int | None = None) -> list:
-    """Full-table scan with an optional early-stop at *scan_limit* items.
+def _do_scan(
+    connection,
+    model,
+    conditions: list,
+    low_mark: int = 0,
+    high_mark: int | None = None,
+) -> list:
+    """Cursor-aware full-table scan.
 
-    When *scan_limit* is provided we pass ``Limit=scan_limit`` to DynamoDB so
-    that each page evaluates at most that many items, and we stop paginating
-    once we have accumulated the requested number.  This avoids iterating
-    through millions of rows when only a small page is needed (e.g. admin list).
+    Uses a process-level cursor cache to avoid re-scanning rows already consumed
+    by previous pages.  Example (admin list, page_size=50):
+
+      page 1  low=0,   high=50  → Scan from table start, save cursor@50
+      page 2  low=50,  high=100 → Scan(ExclusiveStartKey=cursor@50), save cursor@100
+      page 4  low=150, high=200 → finds best cursor (e.g. @150), reads only 50 new rows
+
+    Returns items already sliced to [low_mark:high_mark] so the caller must NOT
+    call _apply_limits again on the result.
+
+    Callers that need ALL matching items (UPDATE, DELETE) should pass
+    low_mark=0, high_mark=None — no cursor lookup is attempted, all items returned.
     """
-    t0 = time.perf_counter()
+    tbl_name = _table_name(connection, model)
     table = _get_table(connection, model)
-    kwargs: dict[str, Any] = {}
+
     filter_expr, is_empty = _build_filter_expression(conditions, model)
     if is_empty:
         return []
+
+    # ── Find best saved cursor at or before low_mark ──────────────────────
+    fhash = _filter_hash(conditions)
+    cursor_key = (tbl_name, fhash)
+    start_offset = 0
+    start_cursor: dict | None = None
+
+    if low_mark > 0:
+        with _SCAN_CURSOR_LOCK:
+            offsets = dict(_SCAN_CURSORS.get(cursor_key, {}))
+        for off in sorted(offsets.keys(), reverse=True):
+            if off <= low_mark:
+                start_offset = off
+                start_cursor = offsets[off]
+                break
+
+    kwargs: dict[str, Any] = {}
     if filter_expr is not None:
         kwargs["FilterExpression"] = filter_expr
-    if scan_limit is not None:
-        kwargs["Limit"] = scan_limit
+    if start_cursor:
+        kwargs["ExclusiveStartKey"] = start_cursor
 
+    # How many filtered items to collect from start_cursor onward
+    need = (high_mark - start_offset) if high_mark is not None else None
+
+    t0 = time.perf_counter()
     items: list = []
     while True:
         resp = table.scan(**kwargs)
-        items.extend(resp.get("Items", []))
-        if not resp.get("LastEvaluatedKey"):
+        batch = resp.get("Items", [])
+        items.extend(batch)
+        last_key = resp.get("LastEvaluatedKey")
+
+        # Save this DDB page-boundary as a cursor checkpoint
+        if last_key:
+            abs_offset = start_offset + len(items)
+            with _SCAN_CURSOR_LOCK:
+                entry = _SCAN_CURSORS.setdefault(cursor_key, {})
+                if abs_offset not in entry:
+                    entry[abs_offset] = last_key
+                    if len(entry) > _MAX_CURSOR_OFFSETS:
+                        del entry[min(entry.keys())]
+
+        if not last_key:
             break
-        if scan_limit is not None and len(items) >= scan_limit:
+        if need is not None and len(items) >= need:
             break
-        kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+        kwargs["ExclusiveStartKey"] = last_key
+
     filter_summary = ", ".join(f"{c[0]}={c[1]!r}" for c in conditions) if conditions else "(none)"
-    _scan_params: dict = {"TableName": _table_name(connection, model)}
+    _scan_params: dict = {"TableName": tbl_name}
     if conditions:
         _scan_params["FilterExpression"] = filter_summary
-    if scan_limit is not None:
-        _scan_params["Limit"] = scan_limit
-    _record("SCAN", connection, model, t0, len(items), filter=filter_summary, params=_scan_params)
-    return items
+    if start_cursor:
+        _scan_params["ExclusiveStartKey"] = f"<cursor for offset {start_offset}>"
+    if high_mark is not None:
+        _scan_params["FetchWindow"] = f"{low_mark}–{high_mark}"
+
+    # items[] runs from start_offset; slice to the requested [low_mark, high_mark) window
+    sl_start = max(0, low_mark - start_offset)
+    sl_end = (high_mark - start_offset) if high_mark is not None else None
+    result = items[sl_start:sl_end]
+
+    _record("SCAN", connection, model, t0, len(result),
+            filter=filter_summary,
+            cursor=f"@{start_offset}" if start_cursor else None,
+            params=_scan_params)
+    return result
 
 
 def _do_count_scan(connection, model, conditions: list) -> int:
@@ -856,8 +944,10 @@ class SQLCompiler(BaseSQLCompiler):
         # Execute DynamoDB call
         if pk_value is not None:
             items = _do_get_item(self.connection, model, pk_value)
+            scan_applied_limits = False
         elif pk_values is not None:
             items = _do_batch_get(self.connection, model, pk_values)
+            scan_applied_limits = False
         else:
             scan_limit = self.query.high_mark  # None means no limit
             gsi = _detect_gsi_query(conditions, model)
@@ -867,15 +957,21 @@ class SQLCompiler(BaseSQLCompiler):
                     self.connection, model, index_name, key_col, key_value,
                     scan_limit=scan_limit,
                 )
+                scan_applied_limits = False
             else:
                 if not _option(self.connection, "scan_on_filter", True) and conditions:
                     raise RuntimeError(
                         "DynamoDB: scan_on_filter=False but a non-pk filter was "
                         "requested. Add a GSI or enable scan_on_filter."
                     )
-                # Pass high_mark as scan_limit so we don't read the whole table
-                # when Django only needs one page (e.g. admin changelist).
-                items = _do_scan(self.connection, model, conditions, scan_limit=scan_limit)
+                # _do_scan handles both the cursor lookup and the low/high slicing,
+                # so we must NOT call _apply_limits again afterwards.
+                items = _do_scan(
+                    self.connection, model, conditions,
+                    low_mark=self.query.low_mark or 0,
+                    high_mark=self.query.high_mark,
+                )
+                scan_applied_limits = True
 
         # ── FK prefetch (select_related) ──────────────────────────────────
         # When the queryset uses select_related() (always true in Django admin
@@ -887,7 +983,8 @@ class SQLCompiler(BaseSQLCompiler):
             _prefetch_fks(self.connection, model, items)
 
         items = _apply_ordering(items, self.query)
-        items = _apply_limits(items, self.query)
+        if not scan_applied_limits:
+            items = _apply_limits(items, self.query)
 
         # Build rows — no extra_select offset needed (we bypass SQL entirely)
         rows = [_item_to_row(item, fields) for item in items]
@@ -1022,6 +1119,7 @@ class SQLInsertCompiler(BaseSQLInsertCompiler):
             table.put_item(Item=item)
             _record("PUT_ITEM", self.connection, model, t0_put, 1, pk=item.get(pk_attname),
                     params={"TableName": _table_name(self.connection, model), "Item": item})
+            _evict_scan_cursors(_table_name(self.connection, model))
             results.append(item[pk_attname])
 
         if returning_fields:
@@ -1061,6 +1159,7 @@ class SQLUpdateCompiler(BaseSQLUpdateCompiler):
             _record("UPDATE", self.connection, model, t0_put, 1,
                     params={"TableName": _table_name(self.connection, model),
                             "Key": {pk_col: item.get(pk_col)}, "UpdatedFields": [f.attname for f, _, _ in self.query.values]})
+            _evict_scan_cursors(_table_name(self.connection, model))
             updated += 1
 
         return updated
@@ -1093,6 +1192,7 @@ class SQLDeleteCompiler(BaseSQLDeleteCompiler):
             _record("DELETE", self.connection, model, t0, 1, key=pk_value,
                     params={"TableName": _table_name(self.connection, model), "Key": {pk_col: pk_value}})
             self._evict_cache([pk_value])
+            _evict_scan_cursors(_table_name(self.connection, model))
             return 1
 
         if pk_values is not None:
@@ -1104,6 +1204,7 @@ class SQLDeleteCompiler(BaseSQLDeleteCompiler):
                     params={"TableName": _table_name(self.connection, model),
                             "Keys": [{pk_col: v} for v in pk_values]})
             self._evict_cache(pk_values)
+            _evict_scan_cursors(_table_name(self.connection, model))
             return len(pk_values)
 
         items = _do_scan(self.connection, model, conditions)
@@ -1115,6 +1216,7 @@ class SQLDeleteCompiler(BaseSQLDeleteCompiler):
                     batch.delete_item(Key={pk_col: pk_val})
                     deleted_pks.append(pk_val)
         self._evict_cache(deleted_pks)
+        _evict_scan_cursors(_table_name(self.connection, model))
         return len(items)
 
 
