@@ -22,7 +22,10 @@ Endpoints:
 """
 
 import json
+import os
+import time
 import uuid
+import base64
 
 from django.core.exceptions import ValidationError
 from django.http import JsonResponse
@@ -238,3 +241,134 @@ class CommentDeleteView(View):
             return JsonResponse({}, status=204)
         except (Comment.DoesNotExist, ValidationError, ValueError):
             return JsonResponse({"error": "Not found"}, status=404)
+
+
+# ─────────────────────────────────────── Posts-by-author  (GSI Query)
+
+def _get_dynamo_table(table_name: str):
+    """
+    Return a boto3 DynamoDB Table resource using the same config as the
+    Django DATABASES['dynamodb'] entry.  Bypasses the ORM for direct
+    high-throughput reads / writes.
+    """
+    import boto3
+    from django.conf import settings
+    db = settings.DATABASES["dynamodb"]
+    endpoint = os.environ.get("DYNAMO_ENDPOINT_URL") or db.get("ENDPOINT_URL") or ""
+    opts = dict(
+        region_name=db.get("REGION", "us-east-1"),
+        aws_access_key_id=db.get("AWS_ACCESS_KEY_ID", "test"),
+        aws_secret_access_key=db.get("AWS_SECRET_ACCESS_KEY", "test"),
+    )
+    if endpoint:
+        opts["endpoint_url"] = endpoint
+    prefix = db.get("OPTIONS", {}).get("table_prefix", "")
+    dynamo = boto3.resource("dynamodb", **opts)
+    return dynamo.Table(f"{prefix}{table_name}")
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class AuthorPostsView(View):
+    """
+    GET /api/authors/<pk>/posts/
+
+    Returns posts by a single author using a direct DynamoDB Query against
+    the ``author_id-index`` GSI — O(results) not O(table size).
+
+    Query parameters
+    ────────────────
+    limit   int   Max items per page         (default 50, max 500)
+    cursor  str   Opaque pagination token    (base64-encoded LastEvaluatedKey)
+
+    Response
+    ────────
+    {
+        "author_id": "...",
+        "count": 47,
+        "next_cursor": "eyJpZCI6Li4ufQ==",   ← null on last page
+        "elapsed_ms": 12.4,
+        "posts": [ { "pk": ..., "title": ..., ... }, ... ]
+    }
+    """
+
+    _DEFAULT_LIMIT = 50
+    _MAX_LIMIT = 500
+    _GSI_NAME = "author_id-index"
+
+    def get(self, request, pk):
+        # ── Validate author PK ─────────────────────────────────────────
+        try:
+            author_id = str(uuid.UUID(pk))
+        except ValueError:
+            return JsonResponse({"error": "Invalid author pk"}, status=400)
+
+        try:
+            Author.objects.get(pk=pk)
+        except (Author.DoesNotExist, ValidationError, ValueError):
+            return JsonResponse({"error": "Author not found"}, status=404)
+
+        # ── Parse query params ─────────────────────────────────────────
+        try:
+            limit = min(int(request.GET.get("limit", self._DEFAULT_LIMIT)),
+                        self._MAX_LIMIT)
+        except ValueError:
+            limit = self._DEFAULT_LIMIT
+
+        cursor_raw = request.GET.get("cursor")
+        start_key  = None
+        if cursor_raw:
+            try:
+                start_key = json.loads(
+                    base64.urlsafe_b64decode(cursor_raw.encode()).decode()
+                )
+            except Exception:
+                return JsonResponse({"error": "Invalid cursor"}, status=400)
+
+        # ── DynamoDB GSI Query ─────────────────────────────────────────
+        from boto3.dynamodb.conditions import Key
+
+        table = _get_dynamo_table("demo_app_post")
+
+        query_kwargs: dict = {
+            "IndexName": self._GSI_NAME,
+            "KeyConditionExpression": Key("author_id").eq(author_id),
+            "Limit": limit,
+        }
+        if start_key:
+            query_kwargs["ExclusiveStartKey"] = start_key
+
+        t0   = time.perf_counter()
+        resp = table.query(**query_kwargs)
+        ms   = (time.perf_counter() - t0) * 1000
+
+        # ── Build next cursor ──────────────────────────────────────────
+        last_key    = resp.get("LastEvaluatedKey")
+        next_cursor = None
+        if last_key:
+            next_cursor = base64.urlsafe_b64encode(
+                json.dumps(last_key).encode()
+            ).decode()
+
+        # ── Serialise items ────────────────────────────────────────────
+        posts = []
+        for item in resp.get("Items", []):
+            posts.append({
+                "pk":         item.get("id", ""),
+                "author_id":  item.get("author_id", ""),
+                "title":      item.get("title", ""),
+                "slug":       item.get("slug", ""),
+                "published":  item.get("published", False),
+                "public":     item.get("public", True),
+                "tags":       item.get("tags", []),
+                "view_count": int(item.get("view_count", 0)),
+                "created_at": item.get("created_at", ""),
+                "updated_at": item.get("updated_at", ""),
+            })
+
+        return JsonResponse({
+            "author_id":   author_id,
+            "count":       len(posts),
+            "next_cursor": next_cursor,
+            "elapsed_ms":  round(ms, 2),
+            "posts":       posts,
+        })

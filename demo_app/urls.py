@@ -4,6 +4,7 @@ from . import views
 urlpatterns = [
     path("authors/", views.AuthorListView.as_view(), name="author-list"),
     path("authors/<str:pk>/", views.AuthorDetailView.as_view(), name="author-detail"),
+    path("authors/<str:pk>/posts/", views.AuthorPostsView.as_view(), name="author-posts"),
     path("posts/", views.PostListView.as_view(), name="post-list"),
     path("posts/<str:pk>/", views.PostDetailView.as_view(), name="post-detail"),
     path("posts/<str:post_pk>/comments/", views.CommentCreateView.as_view(), name="comment-create"),
