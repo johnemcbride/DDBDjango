@@ -25,7 +25,6 @@ class PostAdmin(admin.ModelAdmin):
     list_display = ("id", "title", "author", "slug", "published", "public", "view_count", "created_at")
     list_filter = ("published", "public")
     search_fields = ("title", "slug")
-    raw_id_fields = ("author",)
     readonly_fields = ("id", "created_at", "updated_at")
     # Disable the "X total results" COUNT(*) scan — with millions of DynamoDB
     # rows a full-table count scan is prohibitively slow / fails on LocalStack.

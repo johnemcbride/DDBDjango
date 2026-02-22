@@ -324,56 +324,117 @@ def _dynamo_safe(value):
     return value
 
 
-def _build_filter_expression(conditions: list, model):
-    """
-    Build a boto3 ConditionExpression from conditions.
+def _lookup_to_cond(col: str, lookup_name: str, raw_value):
+    """Build a single boto3 condition for one lookup. Returns None for empty IN."""
+    from boto3.dynamodb.conditions import Attr
+    attr = Attr(col)
+    value = _dynamo_safe(raw_value)
+
+    if lookup_name in ("exact", "iexact"):
+        return attr.eq(value)
+    elif lookup_name in ("contains", "icontains"):
+        return attr.contains(value)
+    elif lookup_name in ("startswith", "istartswith"):
+        return attr.begins_with(value)
+    elif lookup_name == "gt":
+        return attr.gt(value)
+    elif lookup_name == "gte":
+        return attr.gte(value)
+    elif lookup_name == "lt":
+        return attr.lt(value)
+    elif lookup_name == "lte":
+        return attr.lte(value)
+    elif lookup_name == "range":
+        return attr.between(*value)
+    elif lookup_name == "in":
+        vals = [_dynamo_safe(v) for v in raw_value]
+        if not vals:
+            return None  # empty IN → signal empty-result
+        cond = Attr(col).eq(vals[0])
+        for v in vals[1:]:
+            cond = cond | Attr(col).eq(v)
+        return cond
+    elif lookup_name == "isnull":
+        return attr.not_exists() if raw_value else attr.exists()
+    else:
+        return attr.eq(value)
+
+
+def _build_filter_from_node(node):
+    """Recursively walk a Django WhereNode preserving AND/OR connectors.
+
+    Django admin search generates OR conditions across search_fields:
+        WHERE (title ILIKE '%q%' OR slug ILIKE '%q%')
+    The old flat-list approach combined everything with AND, breaking search.
+    This function reconstructs the correct boto3 expression from the tree.
+
     Returns (expr_or_None, is_empty_result).
     """
-    from boto3.dynamodb.conditions import Attr
+    if node is None or not hasattr(node, "children"):
+        return None, False
 
+    connector = getattr(node, "connector", "AND")  # 'AND' or 'OR'
+    negated = getattr(node, "negated", False)
+
+    parts: list = []
+    empty_and = False
+
+    for child in node.children:
+        if hasattr(child, "children"):
+            # Nested WhereNode — recurse
+            sub_expr, sub_empty = _build_filter_from_node(child)
+            if sub_empty:
+                if connector == "AND":
+                    return None, True   # empty branch kills the whole AND
+                continue                # OR: skip empty branch, try others
+            if sub_expr is not None:
+                parts.append(sub_expr)
+        elif _is_lookup(child):
+            col = _lookup_attname(child)
+            if col is None:
+                continue
+            cond = _lookup_to_cond(col, child.lookup_name, child.rhs)
+            if cond is None:
+                # empty IN
+                if connector == "AND":
+                    return None, True
+                empty_and = True
+                continue
+            parts.append(cond)
+
+    if not parts:
+        return None, empty_and
+
+    expr = parts[0]
+    for p in parts[1:]:
+        expr = (expr | p) if connector == "OR" else (expr & p)
+
+    if negated:
+        expr = ~expr
+    return expr, False
+
+
+def _build_filter_expression(conditions: list, model):
+    """
+    Build a boto3 ConditionExpression from a flat conditions list.
+    Returns (expr_or_None, is_empty_result).
+    Used by UPDATE/DELETE scan paths where we only have the flat list.
+    For SELECT scans _do_scan uses _build_filter_from_node instead.
+    """
     expr = None
     has_empty_in = False
 
     for col, lookup_name, value, negated in conditions:
-        attr = Attr(col)
-        value = _dynamo_safe(value)
-
-        if lookup_name in ("exact", "iexact"):
-            cond = attr.eq(value)
-        elif lookup_name in ("contains", "icontains"):
-            cond = attr.contains(value)
-        elif lookup_name in ("startswith", "istartswith"):
-            cond = attr.begins_with(value)
-        elif lookup_name == "gt":
-            cond = attr.gt(value)
-        elif lookup_name == "gte":
-            cond = attr.gte(value)
-        elif lookup_name == "lt":
-            cond = attr.lt(value)
-        elif lookup_name == "lte":
-            cond = attr.lte(value)
-        elif lookup_name == "range":
-            cond = attr.between(*value)
-        elif lookup_name == "in":
-            vals = [_dynamo_safe(v) for v in value]
-            if not vals:
-                has_empty_in = True
-                continue
-            cond = Attr(col).eq(vals[0])
-            for v in vals[1:]:
-                cond = cond | Attr(col).eq(v)
-        elif lookup_name == "isnull":
-            cond = attr.not_exists() if value else attr.exists()
-        else:
-            cond = attr.eq(value)
-
+        cond = _lookup_to_cond(col, lookup_name, value)
+        if cond is None:  # empty IN
+            has_empty_in = True
+            continue
         if negated:
             cond = ~cond
-
         expr = cond if expr is None else (expr & cond)
 
     if has_empty_in and expr is None:
-        return None, True  # empty IN with no other conditions → no results
+        return None, True
     return expr, False
 
 
@@ -761,6 +822,7 @@ def _do_scan(
     conditions: list,
     low_mark: int = 0,
     high_mark: int | None = None,
+    where_node=None,
 ) -> list:
     """Cursor-aware full-table scan.
 
@@ -780,7 +842,13 @@ def _do_scan(
     tbl_name = _table_name(connection, model)
     table = _get_table(connection, model)
 
-    filter_expr, is_empty = _build_filter_expression(conditions, model)
+    # Prefer the full WhereNode so OR conditions (e.g. admin search across
+    # multiple search_fields) are preserved.  Fall back to the flat list for
+    # UPDATE/DELETE paths that don't supply where_node.
+    if where_node is not None:
+        filter_expr, is_empty = _build_filter_from_node(where_node)
+    else:
+        filter_expr, is_empty = _build_filter_expression(conditions, model)
     if is_empty:
         return []
 
@@ -883,10 +951,13 @@ def _do_scan(
     return result
 
 
-def _do_count_scan(connection, model, conditions: list) -> int:
+def _do_count_scan(connection, model, conditions: list, where_node=None) -> int:
     table = _get_table(connection, model)
     kwargs: dict[str, Any] = {"Select": "COUNT"}
-    filter_expr, is_empty = _build_filter_expression(conditions, model)
+    if where_node is not None:
+        filter_expr, is_empty = _build_filter_from_node(where_node)
+    else:
+        filter_expr, is_empty = _build_filter_expression(conditions, model)
     if is_empty:
         return 0
     if filter_expr is not None:
@@ -1044,6 +1115,7 @@ class SQLCompiler(BaseSQLCompiler):
                     self.connection, model, conditions,
                     low_mark=self.query.low_mark or 0,
                     high_mark=self.query.high_mark,
+                    where_node=self.query.where,
                 )
                 scan_applied_limits = True
 
@@ -1080,7 +1152,8 @@ class SQLCompiler(BaseSQLCompiler):
 
     def _execute_aggregate(self, result_type):
         _, _, conditions = _parse_where(self.query)
-        count = _do_count_scan(self.connection, self.query.model, conditions)
+        count = _do_count_scan(self.connection, self.query.model, conditions,
+                               where_node=self.query.where)
         row = (count,)
         return row if result_type == SINGLE else [[row]]
 
@@ -1299,6 +1372,7 @@ class SQLAggregateCompiler(BaseSQLAggregateCompiler):
 
     def execute_sql(self, result_type=MULTI):
         _, _, conditions = _parse_where(self.query)
-        count = _do_count_scan(self.connection, self.query.model, conditions)
+        count = _do_count_scan(self.connection, self.query.model, conditions,
+                               where_node=self.query.where)
         row = (count,)
         return row if result_type == SINGLE else [[row]]
