@@ -371,6 +371,20 @@ def _get_table(connection, model):
 
 
 def _do_get_item(connection, model, pk_value: str) -> list:
+    # Check the per-request FK cache first — avoids redundant DDB round-trips
+    # when the same FK key appears multiple times in a page (classic N+1).
+    try:
+        from dynamo_backend.debug_panel import get_fk_cache
+        cache = get_fk_cache()
+        tbl = _table_name(connection, model)
+        cache_key = (tbl, str(pk_value))
+        if cache_key in cache:
+            cached = cache[cache_key]
+            return [cached] if cached is not None else []
+    except Exception:
+        cache = None
+        cache_key = None
+
     t0 = time.perf_counter()
     table = _get_table(connection, model)
     pk_col = _pk_col(model)
@@ -379,6 +393,11 @@ def _do_get_item(connection, model, pk_value: str) -> list:
     item = resp.get("Item")
     result = [item] if item else []
     _record("GET_ITEM", connection, model, t0, len(result), key=pk_value)
+
+    # Populate cache for future lookups of the same key this request
+    if cache is not None and cache_key is not None:
+        cache[cache_key] = item  # item is None if not found — also cache misses
+
     return result
 
 
@@ -408,6 +427,66 @@ def _do_batch_get(connection, model, pk_values: list) -> list:
             unprocessed = resp.get("UnprocessedKeys", {})
     _record("BATCH_GET", connection, model, t0, len(items), keys=len(pk_values))
     return items
+
+
+def _prefetch_fks(connection, model, items: list) -> None:
+    """
+    Proactively batch-fetch every ForeignKey-referenced object for *items*
+    and prime the per-request FK cache.  Subsequent _do_get_item() calls for
+    the same keys return from cache with zero DynamoDB round-trips — turning
+    an N+1 (one GET_ITEM per row) into a single BATCH_GET per FK relation.
+
+    Called when query.select_related is truthy (Django admin always sets this).
+    """
+    if not items:
+        return
+
+    try:
+        from dynamo_backend.debug_panel import get_fk_cache
+        cache = get_fk_cache()
+    except Exception:
+        return  # panel not available — skip silently
+
+    from django.db.models.fields.related import ForeignKey
+
+    for field in model._meta.concrete_fields:
+        if not isinstance(field, ForeignKey):
+            continue
+        related_model = field.remote_field.model
+        tbl = _table_name(connection, related_model)
+
+        # Collect unique FK attname values not already in the cache
+        fk_values: list[str] = []
+        seen: set[str] = set()
+        for item in items:
+            raw = item.get(field.attname)
+            if raw is None:
+                continue
+            key = str(raw)
+            if (tbl, key) not in cache and key not in seen:
+                fk_values.append(key)
+                seen.add(key)
+
+        if not fk_values:
+            continue
+
+        # BatchGetItem for all uncached FK values in one round-trip
+        fetched = _do_batch_get(connection, related_model, fk_values)
+        pk_col = _pk_col(related_model)
+
+        fetched_keys: set[str] = set()
+        for fi in fetched:
+            pk_val = fi.get(pk_col)
+            if pk_val is not None:
+                k = str(pk_val)
+                cache[(tbl, k)] = fi
+                fetched_keys.add(k)
+
+        # Cache misses (orphaned FK targets) → store None so we don't
+        # retry a GET_ITEM for them later this request.
+        for fk_val in fk_values:
+            if fk_val not in fetched_keys:
+                cache[(tbl, fk_val)] = None
 
 
 def _detect_gsi_query(conditions: list, model):
@@ -783,6 +862,15 @@ class SQLCompiler(BaseSQLCompiler):
                 # when Django only needs one page (e.g. admin changelist).
                 items = _do_scan(self.connection, model, conditions, scan_limit=scan_limit)
 
+        # ── FK prefetch (select_related) ──────────────────────────────────
+        # When the queryset uses select_related() (always true in Django admin
+        # changelists), proactively BatchGetItem all unique FK values so that
+        # the subsequent per-row FK attribute accesses hit the cache instead
+        # of each triggering a separate GET_ITEM.  Turns N GET_ITEM calls into
+        # one BATCH_GET call per FK relation on the model.
+        if self.query.select_related:
+            _prefetch_fks(self.connection, model, items)
+
         items = _apply_ordering(items, self.query)
         items = _apply_limits(items, self.query)
 
@@ -963,6 +1051,17 @@ class SQLUpdateCompiler(BaseSQLUpdateCompiler):
 class SQLDeleteCompiler(BaseSQLDeleteCompiler):
     """DELETE compiler — translates to DynamoDB DeleteItem."""
 
+    def _evict_cache(self, pk_vals):
+        """Mark deleted keys as None in the FK cache so stale hits are avoided."""
+        try:
+            from dynamo_backend.debug_panel import get_fk_cache
+            cache = get_fk_cache()
+            tbl = _table_name(self.connection, self.query.model)
+            for v in pk_vals:
+                cache[(tbl, str(v))] = None
+        except Exception:
+            pass
+
     def execute_sql(self, result_type):
         model = self.query.model
         table = _get_table(self.connection, model)
@@ -974,6 +1073,7 @@ class SQLDeleteCompiler(BaseSQLDeleteCompiler):
             t0 = time.perf_counter()
             table.delete_item(Key={pk_col: pk_value})
             _record("DELETE", self.connection, model, t0, 1, key=pk_value)
+            self._evict_cache([pk_value])
             return 1
 
         if pk_values is not None:
@@ -982,14 +1082,18 @@ class SQLDeleteCompiler(BaseSQLDeleteCompiler):
                 for v in pk_values:
                     batch.delete_item(Key={pk_col: v})
             _record("DELETE", self.connection, model, t0, len(pk_values), keys=len(pk_values))
+            self._evict_cache(pk_values)
             return len(pk_values)
 
         items = _do_scan(self.connection, model, conditions)
+        deleted_pks = []
         with table.batch_writer() as batch:
             for item in items:
                 pk_val = item.get(pk_col)
                 if pk_val is not None:
                     batch.delete_item(Key={pk_col: pk_val})
+                    deleted_pks.append(pk_val)
+        self._evict_cache(deleted_pks)
         return len(items)
 
 

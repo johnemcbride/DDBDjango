@@ -48,8 +48,26 @@ OP_BADGE_COLOUR = {
 
 
 def reset_ddb_queries() -> None:
-    """Clear the per-thread query log (called at the start of each request)."""
+    """Clear the per-thread query log and FK cache (called at the start of each request)."""
     _local.queries = []
+    _local.fk_cache = {}
+
+
+# ── Per-request FK lookup cache ────────────────────────────────────────────────
+# Keyed by (table_name, pk_value_str) → DynamoDB item dict (or None if not found).
+# Lives for the duration of one request; reset by reset_ddb_queries() above and
+# also by DynamoCacheMiddleware for requests that don't use the debug panel.
+
+def reset_request_cache() -> None:
+    """Reset only the FK cache (called by DynamoCacheMiddleware on every request)."""
+    _local.fk_cache = {}
+
+
+def get_fk_cache() -> dict:
+    """Return the thread-local FK cache, initialising it if needed."""
+    if not hasattr(_local, "fk_cache"):
+        _local.fk_cache = {}
+    return _local.fk_cache
 
 
 def record_ddb_call(
