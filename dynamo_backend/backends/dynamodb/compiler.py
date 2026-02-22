@@ -602,8 +602,11 @@ def _build_gsi_params(tbl_name, index_name, key_cond_expr, limit):
         if _e.attribute_name_placeholders:
             p["ExpressionAttributeNames"] = dict(_e.attribute_name_placeholders)
         if _e.attribute_value_placeholders:
+            from boto3.dynamodb.types import TypeSerializer
+            _ser = TypeSerializer()
             p["ExpressionAttributeValues"] = {
-                k: dict(v) for k, v in _e.attribute_value_placeholders.items()
+                k: _ser.serialize(v)
+                for k, v in _e.attribute_value_placeholders.items()
             }
         if limit is not None:
             p["Limit"] = limit
@@ -816,27 +819,38 @@ def _do_scan(
         f"{'NOT ' if c[3] else ''}{c[0]}__{c[1]}={c[2]!r}" for c in conditions
     ) if conditions else "(none)"
 
-    # Build the actual DynamoDB request params as boto3 would send them.
-    # Use ConditionExpressionBuilder to render the real FilterExpression string
-    # (e.g. "#n0 = :n0") plus ExpressionAttributeNames/Values — exactly what
-    # goes over the wire — instead of our human-readable summary.
+    # Build the actual DynamoDB request params as boto3 sends them.
+    # We reconstruct from conditions manually so ExpressionAttributeValues
+    # shows the real DDB wire format (e.g. {"BOOL": true}, {"S": "hello"}).
     _scan_params: dict = {"TableName": tbl_name}
     if filter_expr is not None:
         try:
             from boto3.dynamodb.conditions import ConditionExpressionBuilder
+            from boto3.dynamodb.types import TypeSerializer
+            _ser = TypeSerializer()
             _builder = ConditionExpressionBuilder()
             _expr = _builder.build_expression(filter_expr)
             _scan_params["FilterExpression"] = _expr.condition_expression
             if _expr.attribute_name_placeholders:
                 _scan_params["ExpressionAttributeNames"] = dict(_expr.attribute_name_placeholders)
             if _expr.attribute_value_placeholders:
+                # Serialize raw Python values to DDB wire format (e.g. {"BOOL": true})
                 _scan_params["ExpressionAttributeValues"] = {
-                    k: dict(v) for k, v in _expr.attribute_value_placeholders.items()
+                    k: _ser.serialize(v)
+                    for k, v in _expr.attribute_value_placeholders.items()
                 }
+            # Note: no Limit — with FilterExpression, DDB's Limit applies to
+            # items *evaluated* (before filtering), not items *returned*, so
+            # we can't rely on it for page sizing. Pages are accumulated in
+            # Python and sliced to [low_mark:high_mark] after the scan loop.
+            _scan_params["_note"] = (
+                f"no Limit sent; Python slices [{low_mark}:{high_mark}] "
+                "after accumulating matching items"
+            )
         except Exception:
             _scan_params["FilterExpression"] = filter_summary
     if start_cursor:
-        _scan_params["ExclusiveStartKey"] = start_cursor  # real token, not placeholder
+        _scan_params["ExclusiveStartKey"] = start_cursor
 
     # items[] runs from start_offset; slice to the requested [low_mark, high_mark) window
     sl_start = max(0, low_mark - start_offset)
