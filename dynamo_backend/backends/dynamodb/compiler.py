@@ -68,6 +68,18 @@ def _option(connection, key, default):
     return connection.settings_dict.get("OPTIONS", {}).get(key, default)
 
 
+def _ser_val(v: Any) -> Any:
+    """Normalise a Python value so boto3 TypeSerializer.serialize() can handle it.
+
+    DynamoDB stores UUID primary keys as strings, but Django sometimes leaves
+    them as uuid.UUID objects in filter condition values — TypeSerializer has
+    no built-in handler for uuid.UUID and raises TypeError.  Convert early.
+    """
+    if isinstance(v, uuid.UUID):
+        return str(v)
+    return v
+
+
 # ── Process-level scan cursor cache ──────────────────────────────────────────
 # Maps (table_name, filter_hash) → {absolute_item_offset: LastEvaluatedKey}.
 # Lets admin list pages skip re-scanning rows already consumed by earlier pages:
@@ -605,7 +617,7 @@ def _build_gsi_params(tbl_name, index_name, key_cond_expr, limit):
             from boto3.dynamodb.types import TypeSerializer
             _ser = TypeSerializer()
             p["ExpressionAttributeValues"] = {
-                k: _ser.serialize(v)
+                k: _ser.serialize(_ser_val(v))
                 for k, v in _e.attribute_value_placeholders.items()
             }
         if limit is not None:
@@ -836,7 +848,7 @@ def _do_scan(
             if _expr.attribute_value_placeholders:
                 # Serialize raw Python values to DDB wire format (e.g. {"BOOL": true})
                 _scan_params["ExpressionAttributeValues"] = {
-                    k: _ser.serialize(v)
+                    k: _ser.serialize(_ser_val(v))
                     for k, v in _expr.attribute_value_placeholders.items()
                 }
             # Note: no Limit — with FilterExpression, DDB's Limit applies to
