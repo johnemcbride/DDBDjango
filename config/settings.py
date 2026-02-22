@@ -63,10 +63,9 @@ TEMPLATES = [
 ]
 
 # ── Auth ─────────────────────────────────────────────────────────────
-# Custom user model stored in DynamoDB — no SQLite, no M2M groups/perms.
-# Superusers have full access; is_staff lets users into the admin.
-AUTH_USER_MODEL = "dynamo_backend.DynamoUser"
-AUTHENTICATION_BACKENDS = ["dynamo_backend.auth_backend.DynamoAuthBackend"]
+# Stock auth.User is used — no custom user model.
+# apps.py patches auth.User.groups / user_permissions with
+# DynamoManyToManyDescriptor so M2M goes through DynamoDB two-step reads.
 
 # ─────────────────────────────────────────────────────── database
 # DynamoDB is the one and only database — Django's default.

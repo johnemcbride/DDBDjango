@@ -15,19 +15,26 @@ class DynamoBackendConfig(AppConfig):
     name = "dynamo_backend"
     verbose_name = "DynamoDB Backend"
 
-    def import_models(self):
-        """Also import DynamoUser so Django's model registry picks it up."""
-        super().import_models()
-        # user_model.py defines DynamoUser (AbstractBaseUser).  It must be
-        # imported *after* the app registry is ready (Phase 2), so we do it
-        # here rather than at module level in models.py or __init__.py.
-        from . import user_model  # noqa: F401 – side-effect import
-
     def ready(self) -> None:
         import os
+        self._patch_auth_user_m2m()
         if os.environ.get("DYNAMO_SKIP_STARTUP"):
             return
         self._ensure_all_tables()
+
+    @staticmethod
+    def _patch_auth_user_m2m() -> None:
+        """
+        Replace auth.User.groups and auth.User.user_permissions descriptors
+        with DynamoDB-aware versions so M2M reads do a two-step DynamoDB
+        query (GSI on through table → pk__in on target) instead of a SQL JOIN.
+        """
+        from django.contrib.auth.models import User
+        from dynamo_backend.m2m import _DynamoManyToManyDescriptor
+
+        for attr in ("groups", "user_permissions"):
+            field = User._meta.get_field(attr)
+            setattr(User, attr, _DynamoManyToManyDescriptor(field.remote_field, reverse=False))
 
     @staticmethod
     def _ensure_all_tables() -> None:

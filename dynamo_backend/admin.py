@@ -501,11 +501,3 @@ class DynamoModelAdmin(ModelAdmin):
         )
 
 
-# ─────────────────────────────────────────────── DynamoUser admin
-# DynamoUser extends AbstractUser so Django's built-in UserAdmin works
-# out-of-the-box. Groups/permissions use DynamoManyToManyField.
-
-from django.contrib.auth.admin import UserAdmin as _DjangoUserAdmin
-from dynamo_backend.user_model import DynamoUser
-
-admin.site.register(DynamoUser, _DjangoUserAdmin)
