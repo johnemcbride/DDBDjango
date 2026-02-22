@@ -1370,6 +1370,8 @@ class SQLInsertCompiler(BaseSQLInsertCompiler):
             _record("PUT_ITEM", self.connection, model, t0_put, 1, pk=item.get(pk_attname),
                     params={"TableName": _table_name(self.connection, model), "Item": item})
             _evict_scan_cursors(_table_name(self.connection, model))
+            from dynamo_backend import opensearch_sync as _os
+            _os.index_document(_table_name(self.connection, model), item[pk_attname], item)
             results.append(item[pk_attname])
 
         if returning_fields:
@@ -1410,6 +1412,8 @@ class SQLUpdateCompiler(BaseSQLUpdateCompiler):
                     params={"TableName": _table_name(self.connection, model),
                             "Key": {pk_col: item.get(pk_col)}, "UpdatedFields": [f.attname for f, _, _ in self.query.values]})
             _evict_scan_cursors(_table_name(self.connection, model))
+            from dynamo_backend import opensearch_sync as _os
+            _os.index_document(_table_name(self.connection, model), item.get(pk_col), item)
             updated += 1
 
         return updated
@@ -1443,6 +1447,8 @@ class SQLDeleteCompiler(BaseSQLDeleteCompiler):
                     params={"TableName": _table_name(self.connection, model), "Key": {pk_col: pk_value}})
             self._evict_cache([pk_value])
             _evict_scan_cursors(_table_name(self.connection, model))
+            from dynamo_backend import opensearch_sync as _os
+            _os.delete_document(_table_name(self.connection, model), pk_value)
             return 1
 
         if pk_values is not None:
@@ -1455,6 +1461,8 @@ class SQLDeleteCompiler(BaseSQLDeleteCompiler):
                             "Keys": [{pk_col: v} for v in pk_values]})
             self._evict_cache(pk_values)
             _evict_scan_cursors(_table_name(self.connection, model))
+            from dynamo_backend import opensearch_sync as _os
+            _os.delete_documents(_table_name(self.connection, model), pk_values)
             return len(pk_values)
 
         items = _do_scan(self.connection, model, conditions)
@@ -1467,6 +1475,8 @@ class SQLDeleteCompiler(BaseSQLDeleteCompiler):
                     deleted_pks.append(pk_val)
         self._evict_cache(deleted_pks)
         _evict_scan_cursors(_table_name(self.connection, model))
+        from dynamo_backend import opensearch_sync as _os
+        _os.delete_documents(_table_name(self.connection, model), deleted_pks)
         return len(items)
 
 

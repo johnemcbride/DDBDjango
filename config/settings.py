@@ -135,7 +135,16 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Only injected on requests from localhost (the default show_toolbar check)
 INTERNAL_IPS = ["127.0.0.1"]
-
+# ─────────────────────────────────────────────────────── opensearch (via LocalStack)
+# OpenSearch is managed by LocalStack — no separate container needed.
+# The boto3 opensearch client will create/re-use a domain inside LocalStack.
+# Set OPENSEARCH_ENDPOINT_URL='' to disable and fall back to DDB scans.
+OPENSEARCH_ENDPOINT_URL = os.environ.get(
+    "OPENSEARCH_ENDPOINT_URL",
+    # default: same LocalStack gateway as DynamoDB
+    os.environ.get("DYNAMO_ENDPOINT_URL", "http://localhost:4566"),
+)
+OPENSEARCH_DOMAIN_NAME = os.environ.get("OPENSEARCH_DOMAIN_NAME", "ddbdjango")
 DEBUG_TOOLBAR_PANELS = [
     # — Our custom panel first so it's the default selected tab —
     "dynamo_backend.debug_panel.DynamoPanel",

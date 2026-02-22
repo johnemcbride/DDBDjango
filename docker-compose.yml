@@ -7,7 +7,8 @@ services:
     ports:
       - "4566:4566"       # LocalStack gateway (all services)
     environment:
-      - SERVICES=dynamodb
+      - SERVICES=dynamodb,opensearch
+      - OPENSEARCH_ENDPOINT_STRATEGY=domain   # *.localhost.localstack.cloud → 127.0.0.1
       - DEBUG=0
       - DOCKER_HOST=unix:///var/run/docker.sock
       - AWS_DEFAULT_REGION=us-east-1
@@ -21,6 +22,16 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # ── elasticvue ─────────────────────────────────────────────────────────────
+  # Lightweight OpenSearch / Elasticsearch admin UI.
+  # Open http://localhost:8080 then add cluster: see cluster URL printed by reindex.
+  elasticvue:
+    image: cars10/elasticvue
+    container_name: ddbdjango-elasticvue
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
 
 volumes:
   localstack_data:

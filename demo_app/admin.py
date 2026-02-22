@@ -9,18 +9,19 @@ No custom DynamoModelAdmin needed.
 """
 from django.contrib import admin
 
+from dynamo_backend.admin_search import OpenSearchAdminMixin
 from .models import Author, Post, Comment
 
 
 @admin.register(Author)
-class AuthorAdmin(admin.ModelAdmin):
+class AuthorAdmin(OpenSearchAdminMixin, admin.ModelAdmin):
     list_display = ("id", "username", "email", "created_at")
     search_fields = ("username", "email")
     readonly_fields = ("id", "created_at")
 
 
 @admin.register(Post)
-class PostAdmin(admin.ModelAdmin):
+class PostAdmin(OpenSearchAdminMixin, admin.ModelAdmin):
     # 'author' shows the Author.__str__ (username) in the list, not a raw UUID.
     list_display = ("id", "title", "author", "slug", "published", "public", "view_count", "created_at")
     list_filter = ("published", "public")
@@ -33,7 +34,7 @@ class PostAdmin(admin.ModelAdmin):
 
 
 @admin.register(Comment)
-class CommentAdmin(admin.ModelAdmin):
+class CommentAdmin(OpenSearchAdminMixin, admin.ModelAdmin):
     # 'post' shows Post.__str__ (title), not a raw UUID.
     list_display = ("id", "author_name", "post", "approved", "created_at")
     list_filter = ("approved",)
