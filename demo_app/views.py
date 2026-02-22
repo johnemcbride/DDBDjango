@@ -253,7 +253,7 @@ def _get_dynamo_table(table_name: str):
     """
     import boto3
     from django.conf import settings
-    db = settings.DATABASES["dynamodb"]
+    db = settings.DATABASES["default"]
     endpoint = os.environ.get("DYNAMO_ENDPOINT_URL") or db.get("ENDPOINT_URL") or ""
     opts = dict(
         region_name=db.get("REGION", "us-east-1"),

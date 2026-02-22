@@ -28,7 +28,7 @@ from django.core.management.base import BaseCommand
 from demo_app.models import Author
 
 # ── DynamoDB table name ───────────────────────────────────────────────
-_PREFIX = settings.DATABASES["dynamodb"]["OPTIONS"].get("table_prefix", "")
+_PREFIX = settings.DATABASES["default"]["OPTIONS"].get("table_prefix", "")
 _POSTS_TABLE = f"{_PREFIX}demo_app_post"
 _AUTHORS_TABLE = f"{_PREFIX}demo_app_author"
 
@@ -52,7 +52,7 @@ _TOPICS = ["DynamoDB", "Django", "Python", "AWS", "Kubernetes", "PostgreSQL",
 
 def _dynamo_client():
     """Return a boto3 DynamoDB client using settings from DATABASES['dynamodb']."""
-    db = settings.DATABASES["dynamodb"]
+    db = settings.DATABASES["default"]
     endpoint = os.environ.get("DYNAMO_ENDPOINT_URL") or db.get("ENDPOINT_URL") or ""
     kw = dict(
         region_name=db.get("REGION", "us-east-1"),

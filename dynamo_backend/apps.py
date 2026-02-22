@@ -46,7 +46,7 @@ class DynamoBackendConfig(AppConfig):
             except ModuleNotFoundError:
                 pass
 
-        creation = connections["dynamodb"].creation
+        creation = connections["default"].creation
 
         for app_config in django_apps.get_app_configs():
             for model in app_config.get_models():

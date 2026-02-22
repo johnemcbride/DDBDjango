@@ -167,7 +167,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
     }
 
     def __init__(self, settings_dict, alias=None):
-        super().__init__(settings_dict, alias=alias or "dynamodb")
+        super().__init__(settings_dict, alias=alias or "default")
         # Base class already sets self.features, self.ops, self.creation,
         # self.introspection, self.client via their respective _class attrs.
         self._connection = None

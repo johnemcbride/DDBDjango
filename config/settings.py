@@ -69,20 +69,12 @@ AUTH_USER_MODEL = "dynamo_backend.DynamoUser"
 AUTHENTICATION_BACKENDS = ["dynamo_backend.auth_backend.DynamoAuthBackend"]
 
 # ─────────────────────────────────────────────────────── database
-#
-# ALL models — including Django's auth, sessions, contenttypes, and
-# admin — are routed to 'dynamodb' by DynamoRouter.
-#
-# 'default' is kept as an in-memory SQLite placeholder so Django's
-# internals don't complain, but no traffic is ever routed there.
+# DynamoDB is the one and only database — Django's default.
+# All built-in tooling (migrations, admin, check_migrations, …) targets it
+# directly without any router.
 
 DATABASES = {
     "default": {
-        # Unused; DynamoRouter redirects everything to 'dynamodb'.
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": ":memory:",
-    },
-    "dynamodb": {
         "ENGINE": "dynamo_backend.backends.dynamodb",
         # LocalStack endpoint for local dev; empty / None for real AWS
         "ENDPOINT_URL": os.environ.get("DYNAMO_ENDPOINT_URL", "http://localhost:4566"),
@@ -109,11 +101,8 @@ DATABASES = {
     },
 }
 
-# Route ALL models (auth, sessions, admin, contenttypes, demo_app, …) to DynamoDB.
-DATABASE_ROUTERS = ["dynamo_backend.router.DynamoRouter"]
-
 # ── Legacy DYNAMO_BACKEND dict (kept for backward compat with old table utils)
-# New code should use DATABASES['dynamodb'] and the router instead.
+# New code should use DATABASES['default'] directly.
 DYNAMO_BACKEND = {
     "ENDPOINT_URL": os.environ.get("DYNAMO_ENDPOINT_URL", "http://localhost:4566"),
     "REGION": os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),

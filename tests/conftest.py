@@ -44,7 +44,7 @@ def mock_dynamodb():
     # endpoint_url=None (required for moto to intercept calls).  Django loads
     # settings before conftest module code, so os.environ["DYNAMO_ENDPOINT_URL"]
     # may be set too late; patching settings_dict here is the reliable approach.
-    db_conn = connections["dynamodb"]
+    db_conn = connections["default"]
     _saved_endpoint = db_conn.settings_dict.get("ENDPOINT_URL")
     db_conn.settings_dict["ENDPOINT_URL"] = ""  # → _make_resource uses None
 
@@ -85,7 +85,7 @@ def localstack_dynamodb():
     reset_resource_cache()
 
     from django.db import connections
-    db_conn = connections["dynamodb"]
+    db_conn = connections["default"]
     from demo_app.models import Author, Post, Comment
 
     for model in (Author, Post, Comment):
