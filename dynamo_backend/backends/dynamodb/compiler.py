@@ -789,13 +789,12 @@ def _do_scan(
         kwargs["ExclusiveStartKey"] = last_key
 
     filter_summary = ", ".join(f"{c[0]}={c[1]!r}" for c in conditions) if conditions else "(none)"
+    # Build the actual DynamoDB request params (only real API keys go here)
     _scan_params: dict = {"TableName": tbl_name}
     if conditions:
         _scan_params["FilterExpression"] = filter_summary
     if start_cursor:
         _scan_params["ExclusiveStartKey"] = f"<cursor for offset {start_offset}>"
-    if high_mark is not None:
-        _scan_params["FetchWindow"] = f"{low_mark}–{high_mark}"
 
     # items[] runs from start_offset; slice to the requested [low_mark, high_mark) window
     sl_start = max(0, low_mark - start_offset)
@@ -804,6 +803,7 @@ def _do_scan(
 
     _record("SCAN", connection, model, t0, len(result),
             filter=filter_summary,
+            window=f"{low_mark}–{high_mark}" if high_mark is not None else None,
             cursor=f"@{start_offset}" if start_cursor else None,
             params=_scan_params)
     return result
