@@ -29,6 +29,7 @@ Panel registration in settings.py::
 from __future__ import annotations
 
 import html
+import json
 import threading
 from typing import Any
 
@@ -87,6 +88,7 @@ def record_ddb_call(
     store = getattr(_local, "queries", None)
     if store is None:
         return
+    params = details.pop("params", None)
     store.append(
         {
             "op": op,
@@ -94,6 +96,7 @@ def record_ddb_call(
             "duration_ms": round(duration_ms, 2),
             "result_count": result_count,
             "details": {k: v for k, v in details.items() if v is not None},
+            "params": params,
         }
     )
 
@@ -239,7 +242,27 @@ try:
                 for k, v in q["details"].items():
                     v_str = html.escape(str(v))
                     details_parts.append(f"<b>{k}:</b> {v_str}")
-                details_html = "<br>".join(details_parts)
+                # Raw params toggle
+                raw_params = q.get("params")
+                if raw_params:
+                    try:
+                        params_json = html.escape(json.dumps(raw_params, default=str, indent=2))
+                        params_toggle = (
+                            '<details style="margin-top:5px">'
+                            '<summary style="cursor:pointer;color:#1565C0;font-size:0.78rem;'
+                            'user-select:none;list-style:none">'
+                            '&#9654; raw params</summary>'
+                            f'<pre style="margin:4px 0;padding:6px 8px;background:#f4f4f8;'
+                            f'border:1px solid #ccc;border-radius:3px;font-size:0.72rem;'
+                            f'overflow:auto;max-height:180px;white-space:pre">'
+                            f'{params_json}</pre>'
+                            '</details>'
+                        )
+                    except Exception:
+                        params_toggle = ""
+                else:
+                    params_toggle = ""
+                details_html = "<br>".join(details_parts) + params_toggle
 
                 slow_cls = " ddb-slow" if op == "SCAN" else ""
                 rows.append(

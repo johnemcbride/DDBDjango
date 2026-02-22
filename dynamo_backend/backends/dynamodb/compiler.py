@@ -392,7 +392,9 @@ def _do_get_item(connection, model, pk_value: str) -> list:
     resp = table.get_item(Key={pk_col: pk_value}, ConsistentRead=consistent)
     item = resp.get("Item")
     result = [item] if item else []
-    _record("GET_ITEM", connection, model, t0, len(result), key=pk_value)
+    _record("GET_ITEM", connection, model, t0, len(result), key=pk_value,
+            params={"TableName": _table_name(connection, model),
+                    "Key": {pk_col: pk_value}, "ConsistentRead": consistent})
 
     # Populate cache for future lookups of the same key this request
     if cache is not None and cache_key is not None:
@@ -425,7 +427,10 @@ def _do_batch_get(connection, model, pk_values: list) -> list:
             resp = dynamodb.batch_get_item(RequestItems=unprocessed)
             items.extend(resp.get("Responses", {}).get(tbl_name, []))
             unprocessed = resp.get("UnprocessedKeys", {})
-    _record("BATCH_GET", connection, model, t0, len(items), keys=len(pk_values))
+    _record("BATCH_GET", connection, model, t0, len(items), keys=len(pk_values),
+            params={"TableName": tbl_name,
+                    "Keys": [{pk_col: v} for v in pk_values],
+                    "ConsistentRead": consistent})
     return items
 
 
@@ -547,7 +552,12 @@ def _do_gsi_query(
             break
         kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
     _record("GSI_QUERY", connection, model, t0, len(items),
-            index=index_name, key=f"{key_col}={key_value!r}")
+            index=index_name, key=f"{key_col}={key_value!r}",
+            params={"TableName": _table_name(connection, model),
+                    "IndexName": index_name,
+                    "KeyConditionExpression": f"{key_col} = :v",
+                    "ExpressionAttributeValues": {":v": str(key_value)},
+                    **({"Limit": scan_limit} if scan_limit is not None else {})})
     return items
 
 
@@ -702,7 +712,12 @@ def _do_scan(connection, model, conditions: list, scan_limit: int | None = None)
             break
         kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
     filter_summary = ", ".join(f"{c[0]}={c[1]!r}" for c in conditions) if conditions else "(none)"
-    _record("SCAN", connection, model, t0, len(items), filter=filter_summary)
+    _scan_params: dict = {"TableName": _table_name(connection, model)}
+    if conditions:
+        _scan_params["FilterExpression"] = filter_summary
+    if scan_limit is not None:
+        _scan_params["Limit"] = scan_limit
+    _record("SCAN", connection, model, t0, len(items), filter=filter_summary, params=_scan_params)
     return items
 
 
@@ -1005,7 +1020,8 @@ class SQLInsertCompiler(BaseSQLInsertCompiler):
 
             t0_put = time.perf_counter()
             table.put_item(Item=item)
-            _record("PUT_ITEM", self.connection, model, t0_put, 1, pk=item.get(pk_attname))
+            _record("PUT_ITEM", self.connection, model, t0_put, 1, pk=item.get(pk_attname),
+                    params={"TableName": _table_name(self.connection, model), "Item": item})
             results.append(item[pk_attname])
 
         if returning_fields:
@@ -1042,7 +1058,9 @@ class SQLUpdateCompiler(BaseSQLUpdateCompiler):
                     item.pop(field.attname, None)
             t0_put = time.perf_counter()
             table.put_item(Item=item)
-            _record("UPDATE", self.connection, model, t0_put, 1)
+            _record("UPDATE", self.connection, model, t0_put, 1,
+                    params={"TableName": _table_name(self.connection, model),
+                            "Key": {pk_col: item.get(pk_col)}, "UpdatedFields": [f.attname for f, _, _ in self.query.values]})
             updated += 1
 
         return updated
@@ -1072,7 +1090,8 @@ class SQLDeleteCompiler(BaseSQLDeleteCompiler):
         if pk_value is not None:
             t0 = time.perf_counter()
             table.delete_item(Key={pk_col: pk_value})
-            _record("DELETE", self.connection, model, t0, 1, key=pk_value)
+            _record("DELETE", self.connection, model, t0, 1, key=pk_value,
+                    params={"TableName": _table_name(self.connection, model), "Key": {pk_col: pk_value}})
             self._evict_cache([pk_value])
             return 1
 
@@ -1081,7 +1100,9 @@ class SQLDeleteCompiler(BaseSQLDeleteCompiler):
             with table.batch_writer() as batch:
                 for v in pk_values:
                     batch.delete_item(Key={pk_col: v})
-            _record("DELETE", self.connection, model, t0, len(pk_values), keys=len(pk_values))
+            _record("DELETE", self.connection, model, t0, len(pk_values), keys=len(pk_values),
+                    params={"TableName": _table_name(self.connection, model),
+                            "Keys": [{pk_col: v} for v in pk_values]})
             self._evict_cache(pk_values)
             return len(pk_values)
 
