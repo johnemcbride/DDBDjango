@@ -57,7 +57,8 @@ def mock_dynamodb():
         reset_resource_cache()
 
         from demo_app.models import Author, Post, Comment
-        for model in (Author, Post, Comment):
+        from dynamo_backend.user_model import DynamoUser
+        for model in (Author, Post, Comment, DynamoUser):
             db_conn.creation.ensure_table(model)
 
         yield

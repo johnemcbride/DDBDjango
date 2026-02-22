@@ -28,10 +28,15 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
     sql_create_table = ""
     sql_delete_table = ""
 
+    # Required by Django's migration executor
+    deferred_sql: list = []
+
     def __enter__(self):
+        self.deferred_sql = []
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        # Nothing to execute — DynamoDB has no deferred SQL
         pass
 
     # ── Table lifecycle ───────────────────────────────────────────────────

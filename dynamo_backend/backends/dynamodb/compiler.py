@@ -155,13 +155,24 @@ def _from_dynamo_value(field, value):
         return value
 
     # Numeric: DynamoDB Decimal → Python int/float
-    if isinstance(value, Decimal):
-        if isinstance(field, (
-            F.IntegerField, F.AutoField, F.BigIntegerField,
-            F.SmallIntegerField, F.PositiveIntegerField,
-            F.PositiveBigIntegerField, F.PositiveSmallIntegerField,
-        )):
+    # Also handle string → int for AutoField PKs stored as DynamoDB 'S' keys.
+    _int_fields = (
+        F.IntegerField, F.AutoField, F.BigIntegerField, F.SmallIntegerField,
+        F.PositiveIntegerField, F.PositiveBigIntegerField, F.PositiveSmallIntegerField,
+    )
+    if isinstance(field, _int_fields):
+        if isinstance(value, Decimal):
             return int(value)
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except (ValueError, TypeError):
+                return value
+        if isinstance(value, int):
+            return value
+        return value
+
+    if isinstance(value, Decimal):
         if isinstance(field, F.FloatField):
             return float(value)
         # DecimalField: stay as Decimal
@@ -610,9 +621,17 @@ class SQLInsertCompiler(BaseSQLInsertCompiler):
 
             # Generate PK if missing
             if not item.get(pk_attname):
+                import random
                 import django.db.models.fields as F
                 if isinstance(pk_field, F.UUIDField):
                     new_pk = uuid.uuid4()
+                    setattr(obj, pk_attname, new_pk)
+                    item[pk_attname] = str(new_pk)
+                elif isinstance(pk_field, (F.AutoField, F.BigAutoField, F.SmallAutoField)):
+                    # Generate a random integer PK.  Store it as a string in DynamoDB
+                    # (hash key AttributeType 'S') but keep it as an int on the Python
+                    # object so that Django's IntegerField.get_prep_value() works.
+                    new_pk = random.getrandbits(31)  # fits in a 32-bit signed int
                     setattr(obj, pk_attname, new_pk)
                     item[pk_attname] = str(new_pk)
                 else:

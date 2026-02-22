@@ -62,19 +62,25 @@ TEMPLATES = [
     }
 ]
 
+# ── Auth ─────────────────────────────────────────────────────────────
+# Custom user model stored in DynamoDB — no SQLite, no M2M groups/perms.
+# Superusers have full access; is_staff lets users into the admin.
+AUTH_USER_MODEL = "dynamo_backend.DynamoUser"
+AUTHENTICATION_BACKENDS = ["dynamo_backend.auth_backend.DynamoAuthBackend"]
+
 # ─────────────────────────────────────────────────────── database
 #
-# 'default'  – SQLite for Django's own apps (auth, admin, sessions).
-# 'dynamodb' – Custom DynamoDB backend for all application models.
+# ALL models — including Django's auth, sessions, contenttypes, and
+# admin — are routed to 'dynamodb' by DynamoRouter.
 #
-# DATABASE_ROUTERS directs models in DYNAMO_APPS to 'dynamodb' and
-# keeps Django's internal models on 'default'.
+# 'default' is kept as an in-memory SQLite placeholder so Django's
+# internals don't complain, but no traffic is ever routed there.
 
 DATABASES = {
     "default": {
+        # Unused; DynamoRouter redirects everything to 'dynamodb'.
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
-        "TEST": {"NAME": BASE_DIR / "test_db.sqlite3"},
+        "NAME": ":memory:",
     },
     "dynamodb": {
         "ENGINE": "dynamo_backend.backends.dynamodb",
@@ -103,11 +109,8 @@ DATABASES = {
     },
 }
 
-# Route app models to the correct database
+# Route ALL models (auth, sessions, admin, contenttypes, demo_app, …) to DynamoDB.
 DATABASE_ROUTERS = ["dynamo_backend.router.DynamoRouter"]
-
-# App labels whose models live in DynamoDB (all others stay on 'default')
-DYNAMO_APPS = ["demo_app"]
 
 # ── Legacy DYNAMO_BACKEND dict (kept for backward compat with old table utils)
 # New code should use DATABASES['dynamodb'] and the router instead.

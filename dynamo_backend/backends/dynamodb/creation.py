@@ -57,25 +57,42 @@ class DatabaseCreation(BaseDatabaseCreation):
         pk_field = model._meta.pk
         pk_attname = pk_field.attname
 
-        # Attribute definitions start with just the hash key
+        # PK is always stored as a DynamoDB string ('S') — even for AutoField
+        # integer PKs, because _serialize_pk() calls str() on all values.
         attr_defs = [{"AttributeName": pk_attname, "AttributeType": "S"}]
         key_schema = [{"AttributeName": pk_attname, "KeyType": "HASH"}]
 
         # GSIs for indexed / FK fields
         gsis = []
         if self._opt("auto_gsi", True):
+            import django.db.models.fields as _F
+            from django.db.models.fields.related import ForeignKey
+
+            _int_pk_types = (
+                _F.AutoField, _F.BigAutoField, _F.SmallAutoField,
+                _F.IntegerField, _F.BigIntegerField, _F.SmallIntegerField,
+                _F.PositiveIntegerField, _F.PositiveBigIntegerField,
+                _F.PositiveSmallIntegerField,
+            )
+
             gsi_attrs: set[str] = set()
             for field in model._meta.get_fields():
                 # Check db_index or ForeignKey
                 is_indexed = getattr(field, "db_index", False)
-                from django.db.models.fields.related import ForeignKey
                 is_fk = isinstance(field, ForeignKey)
                 if (is_indexed or is_fk) and hasattr(field, "attname"):
                     col = field.attname
                     if col != pk_attname and col not in gsi_attrs:
                         gsi_attrs.add(col)
+                        # FK values are stored as DynamoDB Numbers ('N') when the
+                        # related model's PK is an integer type; otherwise strings.
+                        if is_fk:
+                            related_pk = field.remote_field.model._meta.pk
+                            gsi_type = "N" if isinstance(related_pk, _int_pk_types) else "S"
+                        else:
+                            gsi_type = "S"
                         attr_defs.append(
-                            {"AttributeName": col, "AttributeType": "S"}
+                            {"AttributeName": col, "AttributeType": gsi_type}
                         )
                         gsis.append({
                             "IndexName": f"{col}-index",
