@@ -324,17 +324,35 @@ def _dynamo_safe(value):
     return value
 
 
+# Lookups that DynamoDB cannot express natively (no case-insensitive ops).
+# These are handled entirely in Python after the scan.
+_PYTHON_ONLY_LOOKUPS = frozenset({"iexact", "icontains", "istartswith", "iendswith"})
+
+
 def _lookup_to_cond(col: str, lookup_name: str, raw_value):
-    """Build a single boto3 condition for one lookup. Returns None for empty IN."""
+    """Build a single boto3 condition for one lookup. Returns None for empty IN.
+    i-prefix lookups are NOT handled here — they belong to _PYTHON_ONLY_LOOKUPS
+    and must be applied in Python.
+    """
     from boto3.dynamodb.conditions import Attr
     attr = Attr(col)
     value = _dynamo_safe(raw_value)
 
     if lookup_name in ("exact", "iexact"):
+        # iexact falls back to case-sensitive on DDB side;
+        # the caller must also apply Python filtering for true case-insensitivity.
         return attr.eq(value)
-    elif lookup_name in ("contains", "icontains"):
+    elif lookup_name == "contains":
         return attr.contains(value)
-    elif lookup_name in ("startswith", "istartswith"):
+    elif lookup_name in ("icontains", "istartswith", "iendswith"):
+        # Python-only; not expressible case-insensitively in DDB.
+        # _build_filter_from_node skips these, but _lookup_to_cond is also
+        # used by the flat-list _build_filter_expression for UPDATE/DELETE —
+        # fall back to a case-sensitive approximation so those paths still work.
+        if lookup_name == "icontains":
+            return attr.contains(value)
+        return attr.begins_with(value)
+    elif lookup_name == "startswith":
         return attr.begins_with(value)
     elif lookup_name == "gt":
         return attr.gt(value)
@@ -360,13 +378,81 @@ def _lookup_to_cond(col: str, lookup_name: str, raw_value):
         return attr.eq(value)
 
 
+def _python_filter_match(item: dict, col: str, lookup_name: str, raw_value) -> bool:
+    """Evaluate one case-insensitive condition against a DynamoDB item dict."""
+    val = item.get(col)
+    if val is None:
+        return False
+    val_s = str(val).lower()
+    cmp_s = str(raw_value).lower()
+    if lookup_name == "iexact":
+        return val_s == cmp_s
+    elif lookup_name == "icontains":
+        return cmp_s in val_s
+    elif lookup_name == "istartswith":
+        return val_s.startswith(cmp_s)
+    elif lookup_name == "iendswith":
+        return val_s.endswith(cmp_s)
+    return True
+
+
+def _node_to_py_fn(node):
+    """Recursively build a Python callable for i-prefix conditions in a WhereNode."""
+    connector = getattr(node, "connector", "AND")
+    negated = getattr(node, "negated", False)
+
+    child_fns: list = []
+    for child in node.children:
+        if hasattr(child, "children"):
+            sub_fn = _node_to_py_fn(child)
+            if sub_fn is not None:
+                child_fns.append(sub_fn)
+        elif _is_lookup(child) and child.lookup_name in _PYTHON_ONLY_LOOKUPS:
+            col = _lookup_attname(child)
+            if col:
+                def _make(c, ln, v):
+                    return lambda item: _python_filter_match(item, c, ln, v)
+                child_fns.append(_make(col, child.lookup_name, child.rhs))
+
+    if not child_fns:
+        return None
+
+    if connector == "OR":
+        def _or_fn(item, fns=child_fns, neg=negated):
+            result = any(fn(item) for fn in fns)
+            return not result if neg else result
+        return _or_fn
+    else:
+        def _and_fn(item, fns=child_fns, neg=negated):
+            result = all(fn(item) for fn in fns)
+            return not result if neg else result
+        return _and_fn
+
+
+def _build_python_filter_fn(node):
+    """Return a Python callable (item: dict) -> bool for i-prefix conditions,
+    or None if the WhereNode contains no case-insensitive lookups.
+    """
+    if node is None or not hasattr(node, "children"):
+        return None
+    return _node_to_py_fn(node)
+
+
 def _build_filter_from_node(node):
     """Recursively walk a Django WhereNode preserving AND/OR connectors.
 
     Django admin search generates OR conditions across search_fields:
         WHERE (title ILIKE '%q%' OR slug ILIKE '%q%')
     The old flat-list approach combined everything with AND, breaking search.
-    This function reconstructs the correct boto3 expression from the tree.
+    This function reconstructs the correct boto3 expression from the tree,
+    skipping i-prefix lookups that DynamoDB cannot evaluate case-insensitively
+    (those are handled by _build_python_filter_fn / _do_scan post-filtering).
+
+    For OR nodes: if ANY direct child is a Python-only (i-prefix) lookup,
+    the whole OR is omitted from the DDB expression to avoid accidentally
+    narrowing results (a Python post-filter handles the whole OR).
+    For AND nodes: Python-only children are simply skipped; remaining children
+    are AND-combined in DDB as usual.
 
     Returns (expr_or_None, is_empty_result).
     """
@@ -389,9 +475,20 @@ def _build_filter_from_node(node):
                 continue                # OR: skip empty branch, try others
             if sub_expr is not None:
                 parts.append(sub_expr)
+            elif connector == "OR":
+                # A child OR-branch has no DDB expression (Python-only) —
+                # we can't express the whole OR accurately in DDB, so skip it.
+                return None, False
         elif _is_lookup(child):
             col = _lookup_attname(child)
             if col is None:
+                continue
+            if child.lookup_name in _PYTHON_ONLY_LOOKUPS:
+                # Case-insensitive lookup: DDB can't do it.
+                if connector == "OR":
+                    # One OR branch is Python-only → can't express correctly in DDB.
+                    return None, False
+                # AND: skip this condition; Python post-filter handles it.
                 continue
             cond = _lookup_to_cond(col, child.lookup_name, child.rhs)
             if cond is None:
@@ -873,6 +970,10 @@ def _do_scan(
     if start_cursor:
         kwargs["ExclusiveStartKey"] = start_cursor
 
+    # Python post-filter for case-insensitive lookups (icontains, iexact, etc.)
+    # that DynamoDB cannot express natively.
+    py_filter = _build_python_filter_fn(where_node) if where_node is not None else None
+
     # How many filtered items to collect from start_cursor onward
     need = (high_mark - start_offset) if high_mark is not None else None
 
@@ -881,6 +982,8 @@ def _do_scan(
     while True:
         resp = table.scan(**kwargs)
         batch = resp.get("Items", [])
+        if py_filter is not None:
+            batch = [item for item in batch if py_filter(item)]
         items.extend(batch)
         last_key = resp.get("LastEvaluatedKey")
 
