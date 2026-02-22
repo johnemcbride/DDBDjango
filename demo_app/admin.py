@@ -1,23 +1,39 @@
+"""
+demo_app.admin
+~~~~~~~~~~~~~~
+Standard Django ModelAdmin registrations for the DynamoDB-backed models.
+
+ForeignKey fields (author, post) are displayed as linked objects in the
+change list and change form — exactly the same as a relational Django project.
+No custom DynamoModelAdmin needed.
+"""
 from django.contrib import admin
 
-from dynamo_backend.admin import DynamoModelAdmin
 from .models import Author, Post, Comment
 
 
 @admin.register(Author)
-class AuthorAdmin(DynamoModelAdmin):
-    list_display = ("pk", "username", "email", "created_at")
+class AuthorAdmin(admin.ModelAdmin):
+    list_display = ("id", "username", "email", "created_at")
     search_fields = ("username", "email")
+    readonly_fields = ("id", "created_at")
 
 
 @admin.register(Post)
-class PostAdmin(DynamoModelAdmin):
-    list_display = ("pk", "title", "slug", "published", "public", "view_count", "created_at")
+class PostAdmin(admin.ModelAdmin):
+    # 'author' shows the Author.__str__ (username) in the list, not a raw UUID.
+    list_display = ("id", "title", "author", "slug", "published", "public", "view_count", "created_at")
+    list_filter = ("published", "public")
     search_fields = ("title", "slug")
-    list_filter = ()
+    raw_id_fields = ("author",)
+    readonly_fields = ("id", "created_at", "updated_at")
 
 
 @admin.register(Comment)
-class CommentAdmin(DynamoModelAdmin):
-    list_display = ("pk", "author_name", "post_pk", "approved", "created_at")
+class CommentAdmin(admin.ModelAdmin):
+    # 'post' shows Post.__str__ (title), not a raw UUID.
+    list_display = ("id", "author_name", "post", "approved", "created_at")
+    list_filter = ("approved",)
     search_fields = ("author_name", "body")
+    raw_id_fields = ("post",)
+    readonly_fields = ("id", "created_at")

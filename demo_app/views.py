@@ -11,7 +11,7 @@ Endpoints:
     PUT  /api/authors/<pk>/             update author
     DELETE /api/authors/<pk>/           delete author
 
-    GET  /api/posts/                    list posts (optionally ?author_pk=)
+    GET  /api/posts/                    list posts (optionally ?author_id=)
     POST /api/posts/                    create post
     GET  /api/posts/<pk>/               retrieve post + comments
     PUT  /api/posts/<pk>/               update post
@@ -22,7 +22,9 @@ Endpoints:
 """
 
 import json
+import uuid
 
+from django.core.exceptions import ValidationError
 from django.http import JsonResponse
 from django.views import View
 from django.utils.decorators import method_decorator
@@ -38,9 +40,16 @@ def _body(request) -> dict:
         return {}
 
 
+def _str_pk(value) -> str | None:
+    """Normalize a pk (UUID or str) to string for JSON output."""
+    if value is None:
+        return None
+    return str(value)
+
+
 def _author_dict(a: Author) -> dict:
     return {
-        "pk": a.pk,
+        "pk": _str_pk(a.pk),
         "username": a.username,
         "email": a.email,
         "bio": a.bio,
@@ -50,11 +59,12 @@ def _author_dict(a: Author) -> dict:
 
 def _post_dict(p: Post) -> dict:
     return {
-        "pk": p.pk,
+        "pk": _str_pk(p.pk),
         "title": p.title,
         "slug": p.slug,
         "body": p.body,
-        "author_pk": p.author_pk,
+        # Expose author_id (UUID string) for backward compat + convenience
+        "author_id": _str_pk(p.author_id),
         "published": p.published,
         "public": p.public,
         "tags": p.tags or [],
@@ -66,8 +76,8 @@ def _post_dict(p: Post) -> dict:
 
 def _comment_dict(c: Comment) -> dict:
     return {
-        "pk": c.pk,
-        "post_pk": c.post_pk,
+        "pk": _str_pk(c.pk),
+        "post_id": _str_pk(c.post_id),
         "author_name": c.author_name,
         "body": c.body,
         "approved": c.approved,
@@ -101,7 +111,7 @@ class AuthorDetailView(View):
     def _get_or_404(self, pk):
         try:
             return Author.objects.get(pk=pk)
-        except Author.DoesNotExist:
+        except (Author.DoesNotExist, ValidationError, ValueError):
             return None
 
     def get(self, request, pk):
@@ -134,9 +144,10 @@ class AuthorDetailView(View):
 @method_decorator(csrf_exempt, name="dispatch")
 class PostListView(View):
     def get(self, request):
-        author_pk = request.GET.get("author_pk")
-        if author_pk:
-            posts = Post.objects.filter(author_pk=author_pk)
+        # Support both legacy ?author_pk= and new ?author_id= query params
+        author_id = request.GET.get("author_id") or request.GET.get("author_pk")
+        if author_id:
+            posts = Post.objects.filter(author_id=author_id)
         else:
             posts = Post.objects.all()
         return JsonResponse({"posts": [_post_dict(p) for p in posts]})
@@ -144,11 +155,13 @@ class PostListView(View):
     def post(self, request):
         data = _body(request)
         try:
+            # Accept author_id or author_pk for backward compat
+            author_id = data.get("author_id") or data.get("author_pk")
             post = Post.objects.create(
                 title=data["title"],
                 slug=data["slug"],
                 body=data.get("body", ""),
-                author_pk=data.get("author_pk", ""),
+                author_id=author_id,
                 published=data.get("published", False),
                 tags=data.get("tags", []),
             )
@@ -162,17 +175,16 @@ class PostDetailView(View):
     def _get_or_404(self, pk):
         try:
             return Post.objects.get(pk=pk)
-        except Post.DoesNotExist:
+        except (Post.DoesNotExist, ValidationError, ValueError):
             return None
 
     def get(self, request, pk):
         post = self._get_or_404(pk)
         if not post:
             return JsonResponse({"error": "Not found"}, status=404)
-        # Increment view count
         post.view_count = (post.view_count or 0) + 1
         post.save()
-        comments = [_comment_dict(c) for c in Comment.objects.filter(post_pk=pk)]
+        comments = [_comment_dict(c) for c in Comment.objects.filter(post_id=pk)]
         return JsonResponse({**_post_dict(post), "comments": comments})
 
     def put(self, request, pk):
@@ -190,7 +202,7 @@ class PostDetailView(View):
         post = self._get_or_404(pk)
         if not post:
             return JsonResponse({"error": "Not found"}, status=404)
-        Comment.objects.filter(post_pk=pk).delete()
+        Comment.objects.filter(post_id=pk).delete()
         post.delete()
         return JsonResponse({}, status=204)
 
@@ -203,11 +215,11 @@ class CommentCreateView(View):
         data = _body(request)
         try:
             Post.objects.get(pk=post_pk)
-        except Post.DoesNotExist:
+        except (Post.DoesNotExist, ValidationError, ValueError):
             return JsonResponse({"error": "Post not found"}, status=404)
         try:
             comment = Comment.objects.create(
-                post_pk=post_pk,
+                post_id=post_pk,
                 author_name=data["author_name"],
                 body=data["body"],
                 approved=data.get("approved", True),
@@ -224,5 +236,5 @@ class CommentDeleteView(View):
             comment = Comment.objects.get(pk=pk)
             comment.delete()
             return JsonResponse({}, status=204)
-        except Comment.DoesNotExist:
+        except (Comment.DoesNotExist, ValidationError, ValueError):
             return JsonResponse({"error": "Not found"}, status=404)

@@ -63,28 +63,61 @@ TEMPLATES = [
 ]
 
 # ─────────────────────────────────────────────────────── database
-# We don't use Django's ORM / relational DB at all.
-# A dummy sqlite config is kept here only to satisfy Django's
-# system check (e.g. for django.contrib.auth checks).
-# SQLite is used only for Django admin infrastructure (auth, sessions, admin log).
-# All application data lives in DynamoDB.
+#
+# 'default'  – SQLite for Django's own apps (auth, admin, sessions).
+# 'dynamodb' – Custom DynamoDB backend for all application models.
+#
+# DATABASE_ROUTERS directs models in DYNAMO_APPS to 'dynamodb' and
+# keeps Django's internal models on 'default'.
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "db.sqlite3",
-    }
+        "TEST": {"NAME": BASE_DIR / "test_db.sqlite3"},
+    },
+    "dynamodb": {
+        "ENGINE": "dynamo_backend.backends.dynamodb",
+        # LocalStack endpoint for local dev; empty / None for real AWS
+        "ENDPOINT_URL": os.environ.get("DYNAMO_ENDPOINT_URL", "http://localhost:4566"),
+        "REGION": os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
+        "AWS_ACCESS_KEY_ID": os.environ.get("AWS_ACCESS_KEY_ID", "test"),
+        "AWS_SECRET_ACCESS_KEY": os.environ.get("AWS_SECRET_ACCESS_KEY", "test"),
+        "TEST": {"NAME": "test_dynamodb"},
+        # ── Behaviour options ────────────────────────────────────────────────
+        "OPTIONS": {
+            # Prefix all DynamoDB table names (useful for shared AWS accounts)
+            "table_prefix": os.environ.get("DYNAMO_TABLE_PREFIX", ""),
+            # Allow full-table scans when a non-pk filter is used.
+            # Set to False to catch accidental slow queries in production.
+            "scan_on_filter": True,
+            # Use strongly consistent reads (False = eventual consistency, cheaper)
+            "consistent_read": False,
+            # Auto-create a GSI for every db_index=True field and every ForeignKey.
+            "auto_gsi": True,
+            # BatchGetItem chunk size (DynamoDB max is 100; keep under 25 for safety)
+            "batch_chunk_size": 25,
+            # DynamoDB billing mode: PAY_PER_REQUEST | PROVISIONED
+            "billing_mode": "PAY_PER_REQUEST",
+        },
+    },
 }
 
-# ─────────────────────────────────────────────────────── DynamoDB / LocalStack
+# Route app models to the correct database
+DATABASE_ROUTERS = ["dynamo_backend.router.DynamoRouter"]
 
+# App labels whose models live in DynamoDB (all others stay on 'default')
+DYNAMO_APPS = ["demo_app"]
+
+# ── Legacy DYNAMO_BACKEND dict (kept for backward compat with old table utils)
+# New code should use DATABASES['dynamodb'] and the router instead.
 DYNAMO_BACKEND = {
-    # Point at LocalStack for local dev; override via env var in production.
     "ENDPOINT_URL": os.environ.get("DYNAMO_ENDPOINT_URL", "http://localhost:4566"),
     "REGION": os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
     "AWS_ACCESS_KEY_ID": os.environ.get("AWS_ACCESS_KEY_ID", "test"),
     "AWS_SECRET_ACCESS_KEY": os.environ.get("AWS_SECRET_ACCESS_KEY", "test"),
     "TABLE_PREFIX": os.environ.get("DYNAMO_TABLE_PREFIX", ""),
-    "CREATE_TABLES_ON_STARTUP": True,
+    "CREATE_TABLES_ON_STARTUP": False,  # handled by apps.py / migrations now
 }
 
 # ─────────────────────────────────────────────────────── i18n
