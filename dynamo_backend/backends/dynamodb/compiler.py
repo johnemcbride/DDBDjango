@@ -388,7 +388,14 @@ def _do_batch_get(connection, model, pk_values: list) -> list:
     return items
 
 
-def _do_scan(connection, model, conditions: list) -> list:
+def _do_scan(connection, model, conditions: list, scan_limit: int | None = None) -> list:
+    """Full-table scan with an optional early-stop at *scan_limit* items.
+
+    When *scan_limit* is provided we pass ``Limit=scan_limit`` to DynamoDB so
+    that each page evaluates at most that many items, and we stop paginating
+    once we have accumulated the requested number.  This avoids iterating
+    through millions of rows when only a small page is needed (e.g. admin list).
+    """
     table = _get_table(connection, model)
     kwargs: dict[str, Any] = {}
     filter_expr, is_empty = _build_filter_expression(conditions, model)
@@ -396,12 +403,16 @@ def _do_scan(connection, model, conditions: list) -> list:
         return []
     if filter_expr is not None:
         kwargs["FilterExpression"] = filter_expr
+    if scan_limit is not None:
+        kwargs["Limit"] = scan_limit
 
     items: list = []
     while True:
         resp = table.scan(**kwargs)
         items.extend(resp.get("Items", []))
         if not resp.get("LastEvaluatedKey"):
+            break
+        if scan_limit is not None and len(items) >= scan_limit:
             break
         kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
     return items
@@ -523,7 +534,10 @@ class SQLCompiler(BaseSQLCompiler):
                     "DynamoDB: scan_on_filter=False but a non-pk filter was "
                     "requested. Add a GSI or enable scan_on_filter."
                 )
-            items = _do_scan(self.connection, model, conditions)
+            # Pass high_mark as scan_limit so we don't read the whole table
+            # when Django only needs one page (e.g. admin changelist).
+            scan_limit = self.query.high_mark  # None means no limit
+            items = _do_scan(self.connection, model, conditions, scan_limit=scan_limit)
 
         items = _apply_ordering(items, self.query)
         items = _apply_limits(items, self.query)
@@ -561,7 +575,8 @@ class SQLCompiler(BaseSQLCompiler):
             return bool(_do_get_item(self.connection, model, pk_value))
         if pk_values is not None:
             return bool(_do_batch_get(self.connection, model, pk_values[:1]))
-        items = _apply_limits(_do_scan(self.connection, model, conditions), self.query)
+        # For exists() we only need 1 item — stop after the first DynamoDB page.
+        items = _apply_limits(_do_scan(self.connection, model, conditions, scan_limit=1), self.query)
         return bool(items)
 
     def results_iter(
