@@ -22,7 +22,6 @@ Endpoints:
 """
 
 import json
-import os
 import time
 import uuid
 import base64
@@ -243,28 +242,7 @@ class CommentDeleteView(View):
             return JsonResponse({"error": "Not found"}, status=404)
 
 
-# ─────────────────────────────────────── Posts-by-author  (GSI Query)
-
-def _get_dynamo_table(table_name: str):
-    """
-    Return a boto3 DynamoDB Table resource using the same config as the
-    Django DATABASES['dynamodb'] entry.  Bypasses the ORM for direct
-    high-throughput reads / writes.
-    """
-    import boto3
-    from django.conf import settings
-    db = settings.DATABASES["default"]
-    endpoint = os.environ.get("DYNAMO_ENDPOINT_URL") or db.get("ENDPOINT_URL") or ""
-    opts = dict(
-        region_name=db.get("REGION", "us-east-1"),
-        aws_access_key_id=db.get("AWS_ACCESS_KEY_ID", "test"),
-        aws_secret_access_key=db.get("AWS_SECRET_ACCESS_KEY", "test"),
-    )
-    if endpoint:
-        opts["endpoint_url"] = endpoint
-    prefix = db.get("OPTIONS", {}).get("table_prefix", "")
-    dynamo = boto3.resource("dynamodb", **opts)
-    return dynamo.Table(f"{prefix}{table_name}")
+# ───────────────────────── Posts-by-author  (GSI Query via ORM)
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -272,20 +250,21 @@ class AuthorPostsView(View):
     """
     GET /api/authors/<pk>/posts/
 
-    Returns posts by a single author using a direct DynamoDB Query against
-    the ``author_id-index`` GSI — O(results) not O(table size).
+    Returns posts for one author via ``Post.objects.filter(author_id=pk)``.
+    The DynamoDB compiler detects that ``author_id`` carries a GSI and issues
+    a DynamoDB Query (O(results)) instead of a full-table Scan.
 
     Query parameters
     ────────────────
-    limit   int   Max items per page         (default 50, max 500)
-    cursor  str   Opaque pagination token    (base64-encoded LastEvaluatedKey)
+    limit   int   Max items per page          (default 50, max 500)
+    cursor  str   Opaque pagination token     (base64-encoded integer offset)
 
     Response
     ────────
     {
         "author_id": "...",
         "count": 47,
-        "next_cursor": "eyJpZCI6Li4ufQ==",   ← null on last page
+        "next_cursor": "NTA=",   ← null on last page
         "elapsed_ms": 12.4,
         "posts": [ { "pk": ..., "title": ..., ... }, ... ]
     }
@@ -293,7 +272,6 @@ class AuthorPostsView(View):
 
     _DEFAULT_LIMIT = 50
     _MAX_LIMIT = 500
-    _GSI_NAME = "author_id-index"
 
     def get(self, request, pk):
         # ── Validate author PK ─────────────────────────────────────────
@@ -315,60 +293,29 @@ class AuthorPostsView(View):
             limit = self._DEFAULT_LIMIT
 
         cursor_raw = request.GET.get("cursor")
-        start_key  = None
+        offset = 0
         if cursor_raw:
             try:
-                start_key = json.loads(
-                    base64.urlsafe_b64decode(cursor_raw.encode()).decode()
-                )
+                offset = int(base64.urlsafe_b64decode(cursor_raw.encode()).decode())
             except Exception:
                 return JsonResponse({"error": "Invalid cursor"}, status=400)
 
-        # ── DynamoDB GSI Query ─────────────────────────────────────────
-        from boto3.dynamodb.conditions import Key
-
-        table = _get_dynamo_table("demo_app_post")
-
-        query_kwargs: dict = {
-            "IndexName": self._GSI_NAME,
-            "KeyConditionExpression": Key("author_id").eq(author_id),
-            "Limit": limit,
-        }
-        if start_key:
-            query_kwargs["ExclusiveStartKey"] = start_key
-
+        # ── ORM query — compiler uses author_id-index GSI automatically ─
         t0   = time.perf_counter()
-        resp = table.query(**query_kwargs)
+        page = list(Post.objects.filter(author_id=author_id)[offset : offset + limit])
         ms   = (time.perf_counter() - t0) * 1000
 
-        # ── Build next cursor ──────────────────────────────────────────
-        last_key    = resp.get("LastEvaluatedKey")
+        # ── Build next cursor (offset-based) ───────────────────────────
         next_cursor = None
-        if last_key:
+        if len(page) == limit:
             next_cursor = base64.urlsafe_b64encode(
-                json.dumps(last_key).encode()
+                str(offset + limit).encode()
             ).decode()
-
-        # ── Serialise items ────────────────────────────────────────────
-        posts = []
-        for item in resp.get("Items", []):
-            posts.append({
-                "pk":         item.get("id", ""),
-                "author_id":  item.get("author_id", ""),
-                "title":      item.get("title", ""),
-                "slug":       item.get("slug", ""),
-                "published":  item.get("published", False),
-                "public":     item.get("public", True),
-                "tags":       item.get("tags", []),
-                "view_count": int(item.get("view_count", 0)),
-                "created_at": item.get("created_at", ""),
-                "updated_at": item.get("updated_at", ""),
-            })
 
         return JsonResponse({
             "author_id":   author_id,
-            "count":       len(posts),
+            "count":       len(page),
             "next_cursor": next_cursor,
             "elapsed_ms":  round(ms, 2),
-            "posts":       posts,
+            "posts":       [_post_dict(p) for p in page],
         })

@@ -8,6 +8,7 @@ Translation strategy
 SELECT
   WHERE pk = value            → GetItem
   WHERE pk IN [v1, v2, ...]   → BatchGetItem
+  WHERE indexed_field = value → Query  (GSI, O(results))
   anything else               → Scan  (with optional FilterExpression)
   COUNT aggregate             → Scan(Select='COUNT')
 
@@ -388,6 +389,65 @@ def _do_batch_get(connection, model, pk_values: list) -> list:
     return items
 
 
+def _detect_gsi_query(conditions: list, model):
+    """
+    If *conditions* is a single non-negated exact-equality on a non-PK
+    field that carries a GSI (db_index=True or unique=True), return
+    ``(index_name, key_col, key_value)``.  Otherwise return ``None``.
+
+    GSI names follow the convention created by the schema editor:
+    ``{attname}-index``  (e.g. ``author_id-index``, ``slug-index``).
+    """
+    if len(conditions) != 1:
+        return None
+    col, lookup_name, value, negated = conditions[0]
+    if negated or lookup_name not in ("exact", "iexact"):
+        return None
+    pk_attname = _pk_col(model)
+    if col == pk_attname:
+        return None
+    for field in model._meta.concrete_fields:
+        if field.attname == col or field.column == col:
+            if field.attname == pk_attname:
+                return None
+            if getattr(field, "db_index", False) or getattr(field, "unique", False):
+                return f"{col}-index", col, value
+            return None
+    return None
+
+
+def _do_gsi_query(
+    connection, model, index_name: str, key_col: str, key_value,
+    scan_limit: int | None = None,
+) -> list:
+    """Query a GSI using KeyConditionExpression — O(results), not O(table).
+
+    Paginates automatically using LastEvaluatedKey, stopping early when
+    *scan_limit* items have been collected.
+    """
+    from boto3.dynamodb.conditions import Key
+
+    table = _get_table(connection, model)
+    dv = _dynamo_safe(key_value)
+    kwargs: dict[str, Any] = {
+        "IndexName": index_name,
+        "KeyConditionExpression": Key(key_col).eq(dv),
+    }
+    if scan_limit is not None:
+        kwargs["Limit"] = scan_limit
+
+    items: list = []
+    while True:
+        resp = table.query(**kwargs)
+        items.extend(resp.get("Items", []))
+        if not resp.get("LastEvaluatedKey"):
+            break
+        if scan_limit is not None and len(items) >= scan_limit:
+            break
+        kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+    return items
+
+
 def _do_scan(connection, model, conditions: list, scan_limit: int | None = None) -> list:
     """Full-table scan with an optional early-stop at *scan_limit* items.
 
@@ -529,15 +589,23 @@ class SQLCompiler(BaseSQLCompiler):
         elif pk_values is not None:
             items = _do_batch_get(self.connection, model, pk_values)
         else:
-            if not _option(self.connection, "scan_on_filter", True) and conditions:
-                raise RuntimeError(
-                    "DynamoDB: scan_on_filter=False but a non-pk filter was "
-                    "requested. Add a GSI or enable scan_on_filter."
-                )
-            # Pass high_mark as scan_limit so we don't read the whole table
-            # when Django only needs one page (e.g. admin changelist).
             scan_limit = self.query.high_mark  # None means no limit
-            items = _do_scan(self.connection, model, conditions, scan_limit=scan_limit)
+            gsi = _detect_gsi_query(conditions, model)
+            if gsi is not None:
+                index_name, key_col, key_value = gsi
+                items = _do_gsi_query(
+                    self.connection, model, index_name, key_col, key_value,
+                    scan_limit=scan_limit,
+                )
+            else:
+                if not _option(self.connection, "scan_on_filter", True) and conditions:
+                    raise RuntimeError(
+                        "DynamoDB: scan_on_filter=False but a non-pk filter was "
+                        "requested. Add a GSI or enable scan_on_filter."
+                    )
+                # Pass high_mark as scan_limit so we don't read the whole table
+                # when Django only needs one page (e.g. admin changelist).
+                items = _do_scan(self.connection, model, conditions, scan_limit=scan_limit)
 
         items = _apply_ordering(items, self.query)
         items = _apply_limits(items, self.query)
@@ -575,6 +643,14 @@ class SQLCompiler(BaseSQLCompiler):
             return bool(_do_get_item(self.connection, model, pk_value))
         if pk_values is not None:
             return bool(_do_batch_get(self.connection, model, pk_values[:1]))
+        gsi = _detect_gsi_query(conditions, model)
+        if gsi is not None:
+            index_name, key_col, key_value = gsi
+            items = _apply_limits(
+                _do_gsi_query(self.connection, model, index_name, key_col, key_value, scan_limit=1),
+                self.query,
+            )
+            return bool(items)
         # For exists() we only need 1 item — stop after the first DynamoDB page.
         items = _apply_limits(_do_scan(self.connection, model, conditions, scan_limit=1), self.query)
         return bool(items)
