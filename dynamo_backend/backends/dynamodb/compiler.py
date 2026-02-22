@@ -448,6 +448,128 @@ def _do_gsi_query(
     return items
 
 
+def _collect_conditions_for_alias(node, target_alias: str, parent_negated: bool, out: list) -> None:
+    """Walk query.where and collect Lookup children whose lhs.alias matches *target_alias*."""
+    if node is None or not hasattr(node, "children"):
+        return
+    effective_negated = parent_negated ^ node.negated
+    for child in node.children:
+        if hasattr(child, "children"):
+            _collect_conditions_for_alias(child, target_alias, effective_negated, out)
+        elif _is_lookup(child):
+            lhs = child.lhs
+            if getattr(lhs, "alias", None) == target_alias:
+                col = _lookup_attname(child)
+                out.append((col, child.rhs, child.lookup_name, effective_negated))
+
+
+def _detect_m2m_join(query):
+    """
+    Detect a simple M2M through-table JOIN pattern in *query*.
+
+    The signature in alias_map is:
+      - One BaseTable  (the target model, e.g. auth_group)
+      - One Join with refcount > 0  (the through table, e.g. auth_user_groups)
+      - Optionally one Join with refcount == 0  (source model, unused)
+
+    The WHERE condition(s) reference the through-table alias.
+
+    Returns (through_table_name, through_conditions) or None.
+    through_conditions: list of (col, rhs, lookup_name, negated)
+    """
+    from django.db.models.sql.datastructures import Join
+
+    active_joins = [
+        (alias, info)
+        for alias, info in query.alias_map.items()
+        if isinstance(info, Join) and query.alias_refcount.get(alias, 0) > 0
+    ]
+
+    if len(active_joins) != 1:
+        return None
+
+    through_alias, join_info = active_joins[0]
+    through_table = join_info.table_name
+
+    through_conditions: list = []
+    _collect_conditions_for_alias(query.where, through_alias, False, through_conditions)
+
+    if not through_conditions:
+        return None
+
+    return through_table, through_conditions
+
+
+def _do_m2m_join(connection, query, through_table_name: str, through_conditions: list):
+    """
+    Execute a detected M2M join as a two-step DynamoDB query.
+
+    Step 1 — Filter through table for the target PKs (uses GSI when available).
+    Step 2 — BatchGetItem the target model with those PKs.
+
+    Returns a list of DynamoDB items (same shape as _do_batch_get), or None if
+    the pattern is too complex to translate (caller should then raise/fallback).
+    """
+    from django.apps import apps as django_apps
+
+    target_model = query.model
+
+    # Find through model by table name
+    through_model = None
+    for app_config in django_apps.get_app_configs():
+        for model in app_config.get_models():
+            if model._meta.db_table == through_table_name:
+                through_model = model
+                break
+        if through_model:
+            break
+
+    if through_model is None:
+        return None
+
+    # Build ORM filter kwargs from WHERE conditions on the through table.
+    # Only support non-negated exact matches for the through-table filter.
+    filter_kwargs: dict = {}
+    for col, value, lookup, negated in through_conditions:
+        if negated or lookup not in ("exact", "iexact"):
+            return None  # too complex
+        filter_kwargs[col] = value
+
+    if not filter_kwargs:
+        return None
+
+    # Identify the FK on the through model that points to target_model
+    # (it will be the one whose attname is NOT in filter_kwargs).
+    target_fk_attname = None
+    for field in through_model._meta.concrete_fields:
+        if field.attname in filter_kwargs:
+            continue
+        if (
+            hasattr(field, "remote_field")
+            and field.remote_field
+            and getattr(field.remote_field, "model", None) == target_model
+        ):
+            target_fk_attname = field.attname
+            break
+
+    if target_fk_attname is None:
+        return None
+
+    # Step 1: query the through table for target PKs
+    target_ids = list(
+        through_model._default_manager
+        .filter(**filter_kwargs)
+        .values_list(target_fk_attname, flat=True)
+    )
+
+    if not target_ids:
+        return []
+
+    # Step 2: BatchGetItem the target model
+    pk_values = [_serialize_pk(target_model._meta.pk, v) for v in target_ids]
+    return _do_batch_get(connection, target_model, pk_values)
+
+
 def _do_scan(connection, model, conditions: list, scan_limit: int | None = None) -> list:
     """Full-table scan with an optional early-stop at *scan_limit* items.
 
@@ -580,6 +702,33 @@ class SQLCompiler(BaseSQLCompiler):
         # without calling pre_sql_setup (avoids SQL-layer side effects).
         fields = self._setup_klass_info()
 
+        # ── M2M through-table JOIN detection ─────────────────────────────
+        # Transparently handles any ManyToManyField (auth.User.groups, etc.)
+        # without patching model descriptors.  Two-step:  filter through
+        # table → BatchGetItem target model.
+        m2m = _detect_m2m_join(self.query)
+        if m2m is not None:
+            through_table, through_conditions = m2m
+            result = _do_m2m_join(self.connection, self.query, through_table, through_conditions)
+            if result is not None:
+                items = result
+                items = _apply_ordering(items, self.query)
+                items = _apply_limits(items, self.query)
+                rows = [_item_to_row(item, fields) for item in items]
+                if result_type == SINGLE:
+                    return rows[0] if rows else None
+                if result_type == CURSOR:
+                    class _Cursor:
+                        def __init__(self, rows):
+                            self._rows = rows
+                        def fetchall(self):
+                            return self._rows
+                        def fetchone(self):
+                            return self._rows[0] if self._rows else None
+                    return _Cursor(rows)
+                return [rows]
+
+        # ── Normal single-table path ──────────────────────────────────────
         # Parse WHERE
         pk_value, pk_values, conditions = _parse_where(self.query)
 
@@ -637,6 +786,15 @@ class SQLCompiler(BaseSQLCompiler):
     def has_results(self):
         """Used by QuerySet.exists()."""
         model = self.query.model
+
+        # M2M join check
+        m2m = _detect_m2m_join(self.query)
+        if m2m is not None:
+            through_table, through_conditions = m2m
+            result = _do_m2m_join(self.connection, self.query, through_table, through_conditions)
+            if result is not None:
+                return bool(result)
+
         pk_value, pk_values, conditions = _parse_where(self.query)
 
         if pk_value is not None:
