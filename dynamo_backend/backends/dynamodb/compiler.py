@@ -811,7 +811,10 @@ def _do_scan(
             break
         kwargs["ExclusiveStartKey"] = last_key
 
-    filter_summary = ", ".join(f"{c[0]}={c[1]!r}" for c in conditions) if conditions else "(none)"
+    # c = (col, lookup_name, value, negated) — show Django ORM-style col__lookup=value
+    filter_summary = ", ".join(
+        f"{'NOT ' if c[3] else ''}{c[0]}__{c[1]}={c[2]!r}" for c in conditions
+    ) if conditions else "(none)"
 
     # Build the actual DynamoDB request params as boto3 would send them.
     # Use ConditionExpressionBuilder to render the real FilterExpression string
