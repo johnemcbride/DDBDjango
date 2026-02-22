@@ -84,8 +84,8 @@ class DatabaseCreation(BaseDatabaseCreation):
                     col = field.attname
                     if col != pk_attname and col not in gsi_attrs:
                         gsi_attrs.add(col)
-                        # FK values are stored as DynamoDB Numbers ('N') when the
-                        # related model's PK is an integer type; otherwise strings.
+                        # FK values pointing to integer PKs are stored as DynamoDB
+                        # Numbers ('N'); all other GSI keys are strings ('S').
                         if is_fk:
                             related_pk = field.remote_field.model._meta.pk
                             gsi_type = "N" if isinstance(related_pk, _int_pk_types) else "S"
