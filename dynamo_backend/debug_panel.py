@@ -89,6 +89,16 @@ def record_ddb_call(
     if store is None:
         return
     params = details.pop("params", None)
+    # JSON-roundtrip params so only plain Python primitives are stored.
+    # This prevents RecursionError in copy.deepcopy when the debug toolbar's
+    # HistoryPanel deepcopies panel state — boto3 condition objects, Decimals,
+    # and large Key/Item lists all become safe string/dict/list structures.
+    if params is not None:
+        try:
+            import json
+            params = json.loads(json.dumps(params, default=str))
+        except Exception:
+            params = {"_raw": str(params)[:500]}
     store.append(
         {
             "op": op,

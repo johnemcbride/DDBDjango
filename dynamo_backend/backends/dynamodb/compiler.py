@@ -1254,9 +1254,15 @@ class SQLCompiler(BaseSQLCompiler):
         return [rows]  # MULTI
 
     def _execute_aggregate(self, result_type):
-        _, _, conditions = _parse_where(self.query)
-        count = _do_count_scan(self.connection, self.query.model, conditions,
-                               where_node=self.query.where)
+        pk_value, pk_values, conditions = _parse_where(self.query)
+        if pk_value is not None:
+            items = _do_get_item(self.connection, self.query.model, pk_value)
+            count = len(items)
+        elif pk_values is not None:
+            count = len(pk_values)
+        else:
+            count = _do_count_scan(self.connection, self.query.model, conditions,
+                                   where_node=self.query.where)
         row = (count,)
         return row if result_type == SINGLE else [[row]]
 
@@ -1484,8 +1490,17 @@ class SQLAggregateCompiler(BaseSQLAggregateCompiler):
     """Aggregate compiler — COUNT only."""
 
     def execute_sql(self, result_type=MULTI):
-        _, _, conditions = _parse_where(self.query)
-        count = _do_count_scan(self.connection, self.query.model, conditions,
-                               where_node=self.query.where)
+        pk_value, pk_values, conditions = _parse_where(self.query)
+        if pk_value is not None:
+            # Single-PK count — either 0 or 1
+            items = _do_get_item(self.connection, self.query.model, pk_value)
+            count = len(items)
+        elif pk_values is not None:
+            # pk__in — OpenSearch (or caller) already resolved the list;
+            # use its length as the count to avoid a full-table scan.
+            count = len(pk_values)
+        else:
+            count = _do_count_scan(self.connection, self.query.model, conditions,
+                                   where_node=self.query.where)
         row = (count,)
         return row if result_type == SINGLE else [[row]]
