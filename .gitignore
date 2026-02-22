@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+*.so
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Django
+*.sqlite3
+db.sqlite3
+/staticfiles/
+/media/
+local_settings.py
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Editors
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# iCloud / CloudDocs
+*.icloud
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+nohup.out
+/logs/
+
+# Migrations (dynamo — keep these in source control)
+# dynamo_backend/migrations/*.json  # <-- intentionally tracked
