@@ -131,6 +131,14 @@ STATIC_URL = "/static/"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# ─────────────────────────────────────────────────────── sessions
+# Use cache-backed sessions so Django never tries to INSERT/UPDATE the
+# django_session DynamoDB table.  The default LocMemCache is already
+# configured and works fine for local development.  For multi-process
+# production deployments swap CACHES to Redis/Memcached.
+SESSION_ENGINE = "django.contrib.sessions.backends.cache"
+SESSION_CACHE_ALIAS = "default"
+
 # ─────────────────────────────────────────────── debug toolbar
 
 # Only injected on requests from localhost (the default show_toolbar check)
