@@ -581,12 +581,35 @@ def _do_gsi_query(
         kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
     _record("GSI_QUERY", connection, model, t0, len(items),
             index=index_name, key=f"{key_col}={key_value!r}",
-            params={"TableName": _table_name(connection, model),
-                    "IndexName": index_name,
-                    "KeyConditionExpression": f"{key_col} = :v",
-                    "ExpressionAttributeValues": {":v": str(key_value)},
-                    **({"Limit": scan_limit} if scan_limit is not None else {})})
+            params=_build_gsi_params(
+                _table_name(connection, model), index_name,
+                Key(key_col).eq(dv), scan_limit,
+            ))
     return items
+
+
+def _build_gsi_params(tbl_name, index_name, key_cond_expr, limit):
+    """Render the real boto3-serialised params for a GSI Query call."""
+    try:
+        from boto3.dynamodb.conditions import ConditionExpressionBuilder
+        _b = ConditionExpressionBuilder()
+        _e = _b.build_expression(key_cond_expr)
+        p: dict = {
+            "TableName": tbl_name,
+            "IndexName": index_name,
+            "KeyConditionExpression": _e.condition_expression,
+        }
+        if _e.attribute_name_placeholders:
+            p["ExpressionAttributeNames"] = dict(_e.attribute_name_placeholders)
+        if _e.attribute_value_placeholders:
+            p["ExpressionAttributeValues"] = {
+                k: dict(v) for k, v in _e.attribute_value_placeholders.items()
+            }
+        if limit is not None:
+            p["Limit"] = limit
+        return p
+    except Exception:
+        return {"TableName": tbl_name, "IndexName": index_name}
 
 
 def _collect_conditions_for_alias(node, target_alias: str, parent_negated: bool, out: list) -> None:
@@ -789,12 +812,28 @@ def _do_scan(
         kwargs["ExclusiveStartKey"] = last_key
 
     filter_summary = ", ".join(f"{c[0]}={c[1]!r}" for c in conditions) if conditions else "(none)"
-    # Build the actual DynamoDB request params (only real API keys go here)
+
+    # Build the actual DynamoDB request params as boto3 would send them.
+    # Use ConditionExpressionBuilder to render the real FilterExpression string
+    # (e.g. "#n0 = :n0") plus ExpressionAttributeNames/Values — exactly what
+    # goes over the wire — instead of our human-readable summary.
     _scan_params: dict = {"TableName": tbl_name}
-    if conditions:
-        _scan_params["FilterExpression"] = filter_summary
+    if filter_expr is not None:
+        try:
+            from boto3.dynamodb.conditions import ConditionExpressionBuilder
+            _builder = ConditionExpressionBuilder()
+            _expr = _builder.build_expression(filter_expr)
+            _scan_params["FilterExpression"] = _expr.condition_expression
+            if _expr.attribute_name_placeholders:
+                _scan_params["ExpressionAttributeNames"] = dict(_expr.attribute_name_placeholders)
+            if _expr.attribute_value_placeholders:
+                _scan_params["ExpressionAttributeValues"] = {
+                    k: dict(v) for k, v in _expr.attribute_value_placeholders.items()
+                }
+        except Exception:
+            _scan_params["FilterExpression"] = filter_summary
     if start_cursor:
-        _scan_params["ExclusiveStartKey"] = f"<cursor for offset {start_offset}>"
+        _scan_params["ExclusiveStartKey"] = start_cursor  # real token, not placeholder
 
     # items[] runs from start_offset; slice to the requested [low_mark, high_mark) window
     sl_start = max(0, low_mark - start_offset)
