@@ -152,6 +152,18 @@ def _to_dynamo_value(field, value):
     if isinstance(value, int):
         return value
 
+    # String integer — can arrive when an AutoField PK was returned from INSERT
+    # as a DynamoDB string hash key and then used as a FK value on the same request.
+    _int_field_types = (
+        F.IntegerField, F.AutoField, F.BigIntegerField, F.SmallIntegerField,
+        F.PositiveIntegerField, F.PositiveBigIntegerField, F.PositiveSmallIntegerField,
+    )
+    if isinstance(field, _int_field_types) and isinstance(value, str):
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            pass
+
     # float → Decimal for DynamoDB precision
     if isinstance(value, float):
         return Decimal(str(value))
