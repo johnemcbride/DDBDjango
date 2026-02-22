@@ -23,9 +23,24 @@ services:
       timeout: 5s
       retries: 10
 
+  # ── opensearch-cors-proxy ──────────────────────────────────────────────────
+  # nginx that proxies LocalStack's OpenSearch domain and adds CORS headers so
+  # the elasticvue browser SPA can reach it.
+  # Connect elasticvue to: http://localhost:9201
+  opensearch-cors-proxy:
+    image: nginx:alpine
+    container_name: ddbdjango-os-proxy
+    volumes:
+      - ./docker/opensearch-cors-proxy.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "9201:9201"
+    restart: unless-stopped
+    # host.docker.internal is automatically available on macOS Docker Desktop
+    # (no extra_hosts needed)
+
   # ── elasticvue ─────────────────────────────────────────────────────────────
   # Lightweight OpenSearch / Elasticsearch admin UI.
-  # Open http://localhost:8080 then add cluster: see cluster URL printed by reindex.
+  # Open http://localhost:8080 then add cluster: http://localhost:9201
   elasticvue:
     image: cars10/elasticvue
     container_name: ddbdjango-elasticvue
