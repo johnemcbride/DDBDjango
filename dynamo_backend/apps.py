@@ -41,7 +41,10 @@ class DynamoBackendConfig(AppConfig):
         creation = connections["default"].creation
 
         for app_config in django_apps.get_app_configs():
-            for model in app_config.get_models():
+            # include_auto_created=True so auto-generated M2M through tables
+            # (e.g. Post_labels for ManyToManyField without a custom through
+            # model) are also ensured on startup.
+            for model in app_config.get_models(include_auto_created=True):
                 # Skip abstract / proxy / unmanaged models
                 if model._meta.abstract or model._meta.proxy or not model._meta.managed:
                     continue

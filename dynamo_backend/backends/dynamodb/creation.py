@@ -169,7 +169,7 @@ class DatabaseCreation(BaseDatabaseCreation):
             print("Creating DynamoDB test tables...")
 
         for app_config in django_apps.get_app_configs():
-            for model in app_config.get_models():
+            for model in app_config.get_models(include_auto_created=True):
                 if self._model_uses_this_db(model):
                     try:
                         if not keepdb:
@@ -190,7 +190,7 @@ class DatabaseCreation(BaseDatabaseCreation):
         if verbosity >= 1:
             print("Dropping DynamoDB test tables...")
         for app_config in django_apps.get_app_configs():
-            for model in app_config.get_models():
+            for model in app_config.get_models(include_auto_created=True):
                 if self._model_uses_this_db(model):
                     try:
                         self.delete_table(model)

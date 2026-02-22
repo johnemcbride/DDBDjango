@@ -56,9 +56,28 @@ def mock_dynamodb():
         # Create fresh resource in moto's in-memory context.
         reset_resource_cache()
 
-        from demo_app.models import Author, Post, Comment
+        from demo_app.models import (
+            Author, AuthorProfile,
+            Tag,
+            Category,
+            Post, PostCategory,
+            Comment,
+            PostRevision,
+        )
         from django.contrib.auth.models import User
-        for model in (Author, Post, Comment, User):
+
+        # All concrete models — explicit through table (PostCategory) is in the list.
+        # Post.labels.through is the auto-created M2M join table (Post ↔ Tag).
+        for model in (
+            Author, AuthorProfile,
+            Tag,
+            Category,
+            Post, PostCategory,
+            Comment,
+            PostRevision,
+            User,
+            Post.labels.through,   # auto M2M join table: demo_app_post_labels
+        ):
             db_conn.creation.ensure_table(model)
 
         yield
@@ -86,9 +105,26 @@ def localstack_dynamodb():
 
     from django.db import connections
     db_conn = connections["default"]
-    from demo_app.models import Author, Post, Comment
+    from demo_app.models import (
+        Author, AuthorProfile,
+        Tag,
+        Category,
+        Post, PostCategory,
+        Comment,
+        PostRevision,
+    )
 
-    for model in (Author, Post, Comment):
+    _all_models = (
+        Author, AuthorProfile,
+        Tag,
+        Category,
+        Post, PostCategory,
+        Comment,
+        PostRevision,
+        Post.labels.through,
+    )
+
+    for model in _all_models:
         try:
             db_conn.creation.delete_table(model)
         except Exception:
@@ -97,7 +133,7 @@ def localstack_dynamodb():
 
     yield
 
-    for model in (Author, Post, Comment):
+    for model in _all_models:
         try:
             db_conn.creation.delete_table(model)
         except Exception:

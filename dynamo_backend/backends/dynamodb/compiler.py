@@ -869,10 +869,13 @@ def _do_m2m_join(connection, query, through_table_name: str, through_conditions:
 
     target_model = query.model
 
-    # Find through model by table name
+    # Find through model by table name.
+    # include_auto_created=True is required so Django's auto-generated M2M
+    # through models (e.g. Post_labels for Post.labels ManyToManyField) are
+    # included — they are excluded by default from get_models().
     through_model = None
     for app_config in django_apps.get_app_configs():
-        for model in app_config.get_models():
+        for model in app_config.get_models(include_auto_created=True):
             if model._meta.db_table == through_table_name:
                 through_model = model
                 break
@@ -910,12 +913,21 @@ def _do_m2m_join(connection, query, through_table_name: str, through_conditions:
     if target_fk_attname is None:
         return None
 
-    # Step 1: query the through table for target PKs
-    target_ids = list(
+    # Step 1: query the through table for target PKs.
+    # Deduplicate while preserving insertion order — BatchGetItem raises
+    # ValidationException if the same key appears more than once.
+    raw_ids = list(
         through_model._default_manager
         .filter(**filter_kwargs)
         .values_list(target_fk_attname, flat=True)
     )
+    seen: set = set()
+    target_ids = []
+    for v in raw_ids:
+        key = str(v)
+        if key not in seen:
+            seen.add(key)
+            target_ids.append(v)
 
     if not target_ids:
         return []
@@ -1163,23 +1175,35 @@ class SQLCompiler(BaseSQLCompiler):
 
         model = self.query.model
 
-        # COUNT aggregate
-        if self.query.annotations:
+        # ── M2M through-table JOIN detection ─────────────────────────────
+        # Must happen BEFORE the COUNT aggregate check so that M2M count()
+        # calls (which add a COUNT annotation) are handled via the two-step
+        # through-table path rather than falling through to _execute_aggregate
+        # which knows nothing about cross-table JOINs.
+        m2m = _detect_m2m_join(self.query)
+
+        # COUNT aggregate (non-M2M queries)
+        if self.query.annotations and m2m is None:
             return self._execute_aggregate(result_type)
 
         # Populate self.select, self.klass_info, self.annotation_col_map
         # without calling pre_sql_setup (avoids SQL-layer side effects).
-        fields = self._setup_klass_info()
+        fields = self._setup_klass_info() if not self.query.annotations else []
 
-        # ── M2M through-table JOIN detection ─────────────────────────────
+        # ── M2M through-table JOIN path ───────────────────────────────────
         # Transparently handles any ManyToManyField (auth.User.groups, etc.)
         # without patching model descriptors.  Two-step:  filter through
         # table → BatchGetItem target model.
-        m2m = _detect_m2m_join(self.query)
         if m2m is not None:
             through_table, through_conditions = m2m
             result = _do_m2m_join(self.connection, self.query, through_table, through_conditions)
             if result is not None:
+                # COUNT aggregate on M2M (e.g. p.labels.count())
+                if self.query.annotations:
+                    count = len(result)
+                    row = (count,)
+                    return row if result_type == SINGLE else [[row]]
+                # Normal M2M object fetch
                 items = result
                 items = _apply_ordering(items, self.query)
                 items = _apply_limits(items, self.query)
