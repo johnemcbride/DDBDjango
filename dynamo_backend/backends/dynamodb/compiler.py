@@ -25,6 +25,7 @@ batch_chunk_size  int   default 25      BatchGetItem chunk size (max 100)
 
 from __future__ import annotations
 
+import time
 import uuid
 from decimal import Decimal
 from typing import Any
@@ -63,6 +64,21 @@ def _pk_col(model) -> str:
 
 def _option(connection, key, default):
     return connection.settings_dict.get("OPTIONS", {}).get(key, default)
+
+
+def _record(op: str, connection, model, t0: float, count: int, **details) -> None:
+    """Record one DynamoDB call to the debug panel.  Silent no-op everywhere else."""
+    try:
+        from dynamo_backend.debug_panel import record_ddb_call  # lazy — panel optional
+        record_ddb_call(
+            op,
+            _table_name(connection, model),
+            duration_ms=(time.perf_counter() - t0) * 1000,
+            result_count=count,
+            **details,
+        )
+    except Exception:  # never let instrumentation break queries
+        pass
 
 
 # ────────────────────────────────────────────── value coercion helpers
@@ -355,15 +371,19 @@ def _get_table(connection, model):
 
 
 def _do_get_item(connection, model, pk_value: str) -> list:
+    t0 = time.perf_counter()
     table = _get_table(connection, model)
     pk_col = _pk_col(model)
     consistent = _option(connection, "consistent_read", False)
     resp = table.get_item(Key={pk_col: pk_value}, ConsistentRead=consistent)
     item = resp.get("Item")
-    return [item] if item else []
+    result = [item] if item else []
+    _record("GET_ITEM", connection, model, t0, len(result), key=pk_value)
+    return result
 
 
 def _do_batch_get(connection, model, pk_values: list) -> list:
+    t0 = time.perf_counter()
     pk_col = _pk_col(model)
     tbl_name = _table_name(connection, model)
     dynamodb = _get_boto_resource(connection)
@@ -386,6 +406,7 @@ def _do_batch_get(connection, model, pk_values: list) -> list:
             resp = dynamodb.batch_get_item(RequestItems=unprocessed)
             items.extend(resp.get("Responses", {}).get(tbl_name, []))
             unprocessed = resp.get("UnprocessedKeys", {})
+    _record("BATCH_GET", connection, model, t0, len(items), keys=len(pk_values))
     return items
 
 
@@ -436,6 +457,7 @@ def _do_gsi_query(
     if scan_limit is not None:
         kwargs["Limit"] = scan_limit
 
+    t0 = time.perf_counter()
     items: list = []
     while True:
         resp = table.query(**kwargs)
@@ -445,6 +467,8 @@ def _do_gsi_query(
         if scan_limit is not None and len(items) >= scan_limit:
             break
         kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+    _record("GSI_QUERY", connection, model, t0, len(items),
+            index=index_name, key=f"{key_col}={key_value!r}")
     return items
 
 
@@ -578,6 +602,7 @@ def _do_scan(connection, model, conditions: list, scan_limit: int | None = None)
     once we have accumulated the requested number.  This avoids iterating
     through millions of rows when only a small page is needed (e.g. admin list).
     """
+    t0 = time.perf_counter()
     table = _get_table(connection, model)
     kwargs: dict[str, Any] = {}
     filter_expr, is_empty = _build_filter_expression(conditions, model)
@@ -597,6 +622,8 @@ def _do_scan(connection, model, conditions: list, scan_limit: int | None = None)
         if scan_limit is not None and len(items) >= scan_limit:
             break
         kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+    filter_summary = ", ".join(f"{c[0]}={c[1]!r}" for c in conditions) if conditions else "(none)"
+    _record("SCAN", connection, model, t0, len(items), filter=filter_summary)
     return items
 
 
@@ -888,7 +915,9 @@ class SQLInsertCompiler(BaseSQLInsertCompiler):
                     setattr(obj, pk_attname, new_pk)
                     item[pk_attname] = new_pk
 
+            t0_put = time.perf_counter()
             table.put_item(Item=item)
+            _record("PUT_ITEM", self.connection, model, t0_put, 1, pk=item.get(pk_attname))
             results.append(item[pk_attname])
 
         if returning_fields:
@@ -923,7 +952,9 @@ class SQLUpdateCompiler(BaseSQLUpdateCompiler):
                     item[field.attname] = converted
                 else:
                     item.pop(field.attname, None)
+            t0_put = time.perf_counter()
             table.put_item(Item=item)
+            _record("UPDATE", self.connection, model, t0_put, 1)
             updated += 1
 
         return updated
@@ -940,13 +971,17 @@ class SQLDeleteCompiler(BaseSQLDeleteCompiler):
         pk_value, pk_values, conditions = _parse_where(self.query)
 
         if pk_value is not None:
+            t0 = time.perf_counter()
             table.delete_item(Key={pk_col: pk_value})
+            _record("DELETE", self.connection, model, t0, 1, key=pk_value)
             return 1
 
         if pk_values is not None:
+            t0 = time.perf_counter()
             with table.batch_writer() as batch:
                 for v in pk_values:
                     batch.delete_item(Key={pk_col: v})
+            _record("DELETE", self.connection, model, t0, len(pk_values), keys=len(pk_values))
             return len(pk_values)
 
         items = _do_scan(self.connection, model, conditions)

@@ -29,6 +29,9 @@ INSTALLED_APPS = [
     "demo_app.apps.DemoAppConfig",
 ]
 
+if DEBUG:
+    INSTALLED_APPS += ["debug_toolbar"]
+
 # ─────────────────────────────────────────────────────── middleware
 
 MIDDLEWARE = [
@@ -39,6 +42,9 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
 ]
+
+if DEBUG:
+    MIDDLEWARE.insert(0, "debug_toolbar.middleware.DebugToolbarMiddleware")
 
 # ─────────────────────────────────────────────────────── urls / wsgi
 
@@ -123,3 +129,25 @@ USE_TZ = True
 STATIC_URL = "/static/"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# ─────────────────────────────────────────────── debug toolbar
+
+# Only injected on requests from localhost (the default show_toolbar check)
+INTERNAL_IPS = ["127.0.0.1"]
+
+DEBUG_TOOLBAR_PANELS = [
+    # — Our custom panel first so it's the default selected tab —
+    "dynamo_backend.debug_panel.DynamoPanel",
+    # — Standard DjDT panels —
+    "debug_toolbar.panels.history.HistoryPanel",
+    "debug_toolbar.panels.versions.VersionsPanel",
+    "debug_toolbar.panels.timer.TimerPanel",
+    "debug_toolbar.panels.settings.SettingsPanel",
+    "debug_toolbar.panels.headers.HeadersPanel",
+    "debug_toolbar.panels.request.RequestPanel",
+    "debug_toolbar.panels.templates.TemplatesPanel",
+    "debug_toolbar.panels.alerts.AlertsPanel",
+    "debug_toolbar.panels.staticfiles.StaticFilesPanel",
+    "debug_toolbar.panels.redirects.RedirectsPanel",
+    "debug_toolbar.panels.profiling.ProfilingPanel",
+]
