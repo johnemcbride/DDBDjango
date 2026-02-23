@@ -15,6 +15,7 @@ Endpoints (original):
     POST /api/authors/<pk>/profile/     create or update author profile
 
     GET  /api/posts/                    list posts (optionally ?author_id=)
+    GET  /api/posts/search/             full-text search (?q=<query>)
     POST /api/posts/                    create post
     GET  /api/posts/<pk>/               retrieve post + comments
     PUT  /api/posts/<pk>/               update post
@@ -190,6 +191,39 @@ class PostListView(View):
         except (KeyError, Exception) as exc:
             return JsonResponse({"error": str(exc)}, status=400)
         return JsonResponse(_post_dict(post), status=201)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class PostSearchView(View):
+    """GET /api/posts/search/?q=<query>  — full-text search via OpenSearch with DDB scan fallback."""
+
+    def get(self, request):
+        from dynamo_backend.opensearch_sync import search_pks
+
+        q = request.GET.get("q", "").strip()
+        if not q:
+            posts = Post.objects.all()
+            return JsonResponse({"posts": [_post_dict(p) for p in posts]})
+
+        # Try OpenSearch first — returns list of pk strings, or None if unavailable
+        pks = search_pks("demo_app_post", q, ["title", "body", "slug"])
+        if pks is not None:
+            results = []
+            for pk in pks:
+                try:
+                    results.append(_post_dict(Post.objects.get(pk=pk)))
+                except (Post.DoesNotExist, Exception):
+                    pass
+        else:
+            # Fallback: full DDB scan + in-memory filter
+            q_lower = q.lower()
+            results = [
+                _post_dict(p) for p in Post.objects.all()
+                if q_lower in (p.title or "").lower()
+                or q_lower in (p.body or "").lower()
+                or q_lower in (p.slug or "").lower()
+            ]
+        return JsonResponse({"posts": results})
 
 
 @method_decorator(csrf_exempt, name="dispatch")

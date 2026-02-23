@@ -6,6 +6,7 @@ urlpatterns = [
     path("authors/<str:pk>/", views.AuthorDetailView.as_view(), name="author-detail"),
     path("authors/<str:pk>/posts/", views.AuthorPostsView.as_view(), name="author-posts"),
     path("posts/", views.PostListView.as_view(), name="post-list"),
+    path("posts/search/", views.PostSearchView.as_view(), name="post-search"),
     path("posts/<str:pk>/", views.PostDetailView.as_view(), name="post-detail"),
     path("posts/<str:post_pk>/comments/", views.CommentCreateView.as_view(), name="comment-create"),
     path("comments/<str:pk>/", views.CommentDeleteView.as_view(), name="comment-delete"),
