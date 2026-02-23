@@ -27,18 +27,19 @@ A Django application with a **DynamoDB backend** and **OpenSearch integration** 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    Django App                        │
-│  views.py  ──►  models.py (DynamoModel subclasses)  │
-└──────────────────────┬──────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│                    Django App                         │
+│  views.py  ──►  models.py (standard Django models)   │
+│                     ↓                                 │
+│              django.db.models.Model                   │
+└──────────────────────┬───────────────────────────────┘
                        │
-┌──────────────────────▼──────────────────────────────┐
-│               dynamo_backend library                  │
+┌──────────────────────▼───────────────────────────────┐
+│            dynamo_backend (Django backend)            │
 │                                                       │
-│  DynamoModel ──► DynamoManager ──► DynamoQuerySet    │
+│  router.py ──► backends/dynamodb/ ──► connection.py  │
 │       │              │                     │          │
-│   fields.py    opensearch_sync.py   connection.py   │
-│   table.py          │              (boto3 resource) │
+│   table.py    opensearch_sync.py   (boto3 resource)  │
 └───────┬─────────────┼──────────────┬────────────────┘
         │             │              │
         │             └──────────┐   │
@@ -51,12 +52,13 @@ A Django application with a **DynamoDB backend** and **OpenSearch integration** 
 
 ### Opinionated design decisions
 
-* **No Django ORM** — `DynamoModel` bypasses `django.db.models.Model` entirely.
-* **UUID primary keys** — every table has a `pk` string attribute (UUID4).
-* **PAY_PER_REQUEST billing** — no capacity planning needed.
-* **GSI per indexed field** — mark a field `index=True` to get a Global Secondary Index for `filter()`.
-* **No JOINs** — foreign-key relations are stored as `<model>_pk` string fields.
-* **Auto table creation** — tables are created on Django startup (configurable).
+* **Standard Django Models** — Uses regular `django.db.models.Model` with a custom database backend for DynamoDB.
+* **Transparent Integration** — Write normal Django models; the backend handles DynamoDB persistence automatically.
+* **UUID primary keys** — Uses UUIDField as primary keys (stored as strings in DynamoDB).
+* **PAY_PER_REQUEST billing** — No capacity planning needed.
+* **Indexed fields** — Mark fields with `db_index=True` to create Global Secondary Indexes for efficient filtering.
+* **Standard Relationships** — ForeignKey, OneToOneField, and ManyToManyField work as expected.
+* **Auto table creation** — Tables are created on Django startup (configurable).
 
 ---
 
@@ -100,10 +102,10 @@ curl -s -X POST http://localhost:8000/api/authors/ \
   -H "Content-Type: application/json" \
   -d '{"username":"alice","email":"alice@example.com","bio":"Writer"}' | python -m json.tool
 
-# Create a post
+# Create a post (using author's id from previous response)
 curl -s -X POST http://localhost:8000/api/posts/ \
   -H "Content-Type: application/json" \
-  -d '{"title":"Hello DynamoDB","slug":"hello-dynamodb","author_pk":"<author-pk>","published":true}' | python -m json.tool
+  -d '{"title":"Hello DynamoDB","slug":"hello-dynamodb","author":"<author-id>","published":true}' | python -m json.tool
 
 # List posts
 curl -s http://localhost:8000/api/posts/ | python -m json.tool
@@ -125,18 +127,19 @@ Models can be automatically synced to OpenSearch for full-text search capabiliti
 
 ### Enable OpenSearch sync
 
-In your model, add `opensearch_sync = True`:
+In your model's Meta class, add `opensearch_sync = True`:
 
 ```python
-from dynamo_backend import DynamoModel, CharField
+from django.db import models
 
-class Post(DynamoModel):
+class Post(models.Model):
     class Meta:
         opensearch_sync = True  # Auto-sync to OpenSearch
         opensearch_index = "posts"  # Optional custom index name
     
-    title = CharField(max_length=200)
-    content = CharField()
+    title = models.CharField(max_length=200)
+    content = models.TextField()
+    author = models.ForeignKey(Author, on_delete=models.CASCADE)
 ```
 
 ### Configuration
@@ -242,55 +245,74 @@ pytest -m integration
 
 ### Model definition
 
+Use **standard Django models** — DynamoDB persistence is completely transparent:
+
 ```python
-from dynamo_backend import DynamoModel, CharField, IntegerField, BooleanField, DateTimeField
+from django.db import models
+import uuid
 
-class Article(DynamoModel):
+class Article(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    title = models.CharField(max_length=200)
+    published = models.BooleanField(default=False)
+    view_count = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
     class Meta:
-        table_name = "articles"      # defaults to "<app_label>_<modelname>"
-
-    title      = CharField(max_length=200, nullable=False)
-    published  = BooleanField(default=False)
-    view_count = IntegerField(default=0)
-    created_at = DateTimeField(auto_now_add=True)
-    updated_at = DateTimeField(auto_now=True)
+        app_label = "myapp"
 ```
 
-### Available fields
+### Supported field types
 
-| Field | DynamoDB type | Extra options |
+All standard Django fields are supported:
+
+| Django Field | DynamoDB Type | Notes |
 |---|---|---|
-| `CharField` | S | `max_length` |
-| `IntegerField` | N | — |
-| `FloatField` | N | — |
-| `BooleanField` | BOOL | — |
-| `DateTimeField` | S (ISO-8601) | `auto_now`, `auto_now_add` |
-| `JSONField` | M / L | — |
-| `UUIDField` | S | auto-generates UUID4 by default |
-| `ListField` | L | — |
+| `CharField` | S | Stores as string |
+| `TextField` | S | Stores as string |
+| `IntegerField` | N | Stores as number |
+| `FloatField` | N | Stores as number |
+| `BooleanField` | BOOL | Native boolean |
+| `DateTimeField` | S | ISO-8601 format |
+| `DateField` | S | ISO-8601 format |
+| `EmailField` | S | Stores as string |
+| `URLField` | S | Stores as string |
+| `JSONField` | M/L | Native DynamoDB Map/List |
+| `UUIDField` | S | Recommended for primary keys |
+| `ForeignKey` | S | Stores related object's pk |
+| `OneToOneField` | S | Stores related object's pk |
+| `ManyToManyField` | — | Creates join table |
 
-All fields accept `nullable=True/False`, `default=<value or callable>`, `index=True`.
+Use `db_index=True` on fields for efficient filtering (creates GSI).
 
 ### QuerySet cheat sheet
 
+Use **standard Django ORM** syntax:
+
 ```python
 # Create
-post = Post.objects.create(title="Hello", slug="hello", author_pk=author.pk)
+post = Post.objects.create(title="Hello", slug="hello", author=author)
 
 # Retrieve
 post = Post.objects.get(pk="<uuid>")
 
 # Filter
-posts = Post.objects.filter(author_pk=author.pk, published=True)
+posts = Post.objects.filter(author=author, published=True)
 posts = Post.objects.filter(title__contains="Django")
 posts = Post.objects.filter(view_count__gte=100)
-posts = Post.objects.filter(tags__isnull=False)
+posts = Post.objects.filter(labels__isnull=False)
 
 # Exclude
 drafts = Post.objects.exclude(published=True)
 
 # Ordering (in-memory)
 posts = Post.objects.order_by("-created_at")
+
+# Relationships work normally
+author = post.author  # ForeignKey traversal
+comments = post.comments.all()  # Reverse ForeignKey
+tags = post.labels.all()  # ManyToMany
 
 # Slice helpers
 first = Post.objects.first()
@@ -306,31 +328,38 @@ post.delete()
 Post.objects.filter(published=False).delete()
 
 # Bulk create
-Post.objects.bulk_create([Post(title=f"Post {i}", slug=f"post-{i}") for i in range(10)])
+Post.objects.bulk_create([Post(title=f"Post {i}", slug=f"post-{i}", author=author) for i in range(10)])
 
 # get_or_create
-post, created = Post.objects.get_or_create(slug="my-post", defaults={"title": "My Post"})
+post, created = Post.objects.get_or_create(slug="my-post", defaults={"title": "My Post", "author": author})
 ```
 
-### Table management
+### Database configuration
+
+Add the DynamoDB backend to your `DATABASES` setting:
 
 ```python
-from dynamo_backend.table import ensure_table, delete_table
+DATABASES = {
+    "default": {
+        "ENGINE": "dynamo_backend.backends.dynamodb",
+        "NAME": "default",
+        "ENDPOINT_URL": "http://localhost:4566",  # LocalStack
+        "REGION": "us-east-1",
+        "AWS_ACCESS_KEY_ID": "test",
+        "AWS_SECRET_ACCESS_KEY": "test",
+    }
+}
 
-ensure_table(Post)   # create if not exists (idempotent)
-delete_table(Post)   # drop — useful in tests
+DATABASE_ROUTERS = ["dynamo_backend.router.DynamoRouter"]
 ```
 
-### Django settings
+### Additional settings
 
 ```python
+# Optional: Auto-create tables on startup
 DYNAMO_BACKEND = {
-    "ENDPOINT_URL": "http://localhost:4566",  # omit for real AWS
-    "REGION": "us-east-1",
-    "AWS_ACCESS_KEY_ID": "test",
-    "AWS_SECRET_ACCESS_KEY": "test",
-    "TABLE_PREFIX": "myapp_",                 # optional prefix for all tables
     "CREATE_TABLES_ON_STARTUP": True,
+    "TABLE_PREFIX": "myapp_",  # optional prefix for all tables
 }
 ```
 
@@ -344,14 +373,14 @@ DDBDjango includes a custom Django admin integration with advanced search via Op
 
 ```python
 from django.contrib import admin
-from dynamo_backend.admin import DynamoModelAdmin
 from .models import Post
 
 @admin.register(Post)
-class PostAdmin(DynamoModelAdmin):
-    list_display = ['title', 'author_pk', 'published', 'created_at']
+class PostAdmin(admin.ModelAdmin):
+    list_display = ['title', 'author', 'published', 'created_at']
     list_filter = ['published']
     search_fields = ['title', 'content']  # Uses OpenSearch if enabled
+    raw_id_fields = ['author']  # For ForeignKey fields
 ```
 
 ### Access admin
@@ -376,7 +405,7 @@ class PostAdmin(DynamoModelAdmin):
 ### Posts
 | Method | URL | Description |
 |---|---|---|
-| GET | `/api/posts/` | List posts (optional `?author_pk=`) |
+| GET | `/api/posts/` | List posts (optional `?author=<id>`) |
 | GET | `/api/posts/search/?q=<query>` | Search posts (requires OpenSearch) |
 | POST | `/api/posts/` | Create post |
 | GET | `/api/posts/<pk>/` | Get post + comments (increments view count) |
@@ -413,17 +442,16 @@ class PostAdmin(DynamoModelAdmin):
 ### Project Structure
 
 - **dynamo_backend/** - Core library
-  - `models.py` - DynamoModel base class
-  - `fields.py` - Field types
-  - `queryset.py` - Query API
-  - `manager.py` - Model manager
+  - `backends/dynamodb/` - Django database backend for DynamoDB
+  - `router.py` - Database router to direct models to DynamoDB
   - `opensearch_sync.py` - OpenSearch integration
   - `migration_*.py` - Migration system
   - `admin.py` - Admin integration
-  - `backends/dynamodb/` - Database backend
+  - `connection.py` - DynamoDB connection management
+  - `table.py` - Table creation/management
 
 - **demo_app/** - Example application
-  - `models.py` - Blog models (Author, Post, Comment, etc.)
+  - `models.py` - Standard Django models (Author, Post, Comment, etc.)
   - `views.py` - REST API views
   - `frontend_views.py` - Template views
   - `templates/` - HTML templates
