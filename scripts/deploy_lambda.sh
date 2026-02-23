@@ -83,7 +83,7 @@ $AWS s3api create-bucket --bucket "$S3_BUCKET" 2>/dev/null || true
 echo "  ✓ Bucket ready"
 
 echo "→ Uploading $ZIP_FILE to s3://$S3_BUCKET/ ..."
-$AWS s3 cp "$ZIP_FILE" "s3://$S3_BUCKET/$S3_KEY" --quiet
+$AWS s3 cp "$ZIP_FILE" "s3://$S3_BUCKET/$S3_KEY" --quiet --checksum-algorithm CRC32
 echo "  ✓ Uploaded ($(du -sh "$ZIP_FILE" | cut -f1))"
 
 # ── 3. Create IAM role (no-op if exists) ─────────────────────────────────
