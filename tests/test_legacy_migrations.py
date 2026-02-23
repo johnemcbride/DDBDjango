@@ -1,7 +1,10 @@
 """
-tests/test_migrations.py
-~~~~~~~~~~~~~~~~~~~~~~~~~
-Tests for the dynamo_backend migration system.
+tests/test_legacy_migrations.py
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Tests for the LEGACY dynamo_backend migration system (DynamoModel-based).
+
+**NOTE:** This tests the deprecated custom migration system for DynamoModel.
+The current backend uses standard Django migrations (makemigrations/migrate).
 
 Covers:
   - migration_fields  (serialization round-trips)
@@ -40,8 +43,8 @@ def dynamo_mock(mock_dynamodb):
 
 class TestMigrationFields:
     def test_charfield_roundtrip(self):
-        from dynamo_backend.fields import CharField
-        from dynamo_backend.migration_fields import field_to_dict, dict_to_field
+        from dynamo_backend.legacy.fields import CharField
+        from dynamo_backend.legacy.migration_fields import field_to_dict, dict_to_field
 
         f = CharField(max_length=100, nullable=False, default="hello")
         d = field_to_dict(f)
@@ -56,8 +59,8 @@ class TestMigrationFields:
         assert f2.nullable is False
 
     def test_booleanfield_roundtrip(self):
-        from dynamo_backend.fields import BooleanField
-        from dynamo_backend.migration_fields import field_to_dict, dict_to_field
+        from dynamo_backend.legacy.fields import BooleanField
+        from dynamo_backend.legacy.migration_fields import field_to_dict, dict_to_field
 
         f = BooleanField(default=True)
         d = field_to_dict(f)
@@ -67,8 +70,8 @@ class TestMigrationFields:
         assert f2._default is True
 
     def test_integerfield_roundtrip(self):
-        from dynamo_backend.fields import IntegerField
-        from dynamo_backend.migration_fields import field_to_dict, dict_to_field
+        from dynamo_backend.legacy.fields import IntegerField
+        from dynamo_backend.legacy.migration_fields import field_to_dict, dict_to_field
 
         f = IntegerField(default=0)
         d = field_to_dict(f)
@@ -76,8 +79,8 @@ class TestMigrationFields:
         assert f2._default == 0
 
     def test_jsonfield_roundtrip(self):
-        from dynamo_backend.fields import JSONField
-        from dynamo_backend.migration_fields import field_to_dict, dict_to_field
+        from dynamo_backend.legacy.fields import JSONField
+        from dynamo_backend.legacy.migration_fields import field_to_dict, dict_to_field
 
         f = JSONField(default=dict)
         d = field_to_dict(f)
@@ -86,23 +89,23 @@ class TestMigrationFields:
         assert isinstance(f2, JSONField)
 
     def test_fields_equal_same(self):
-        from dynamo_backend.fields import CharField
-        from dynamo_backend.migration_fields import fields_equal
+        from dynamo_backend.legacy.fields import CharField
+        from dynamo_backend.legacy.migration_fields import fields_equal
 
         f1 = CharField(max_length=50)
         f2 = CharField(max_length=50)
         assert fields_equal(f1, f2)
 
     def test_fields_equal_different(self):
-        from dynamo_backend.fields import CharField
-        from dynamo_backend.migration_fields import fields_equal
+        from dynamo_backend.legacy.fields import CharField
+        from dynamo_backend.legacy.migration_fields import fields_equal
 
         f1 = CharField(max_length=50)
         f2 = CharField(max_length=100)
         assert not fields_equal(f1, f2)
 
     def test_unknown_type_raises(self):
-        from dynamo_backend.migration_fields import dict_to_field
+        from dynamo_backend.legacy.migration_fields import dict_to_field
 
         with pytest.raises(ValueError, match="Unknown field type"):
             dict_to_field({"type": "NonExistentField"})
@@ -117,8 +120,8 @@ class TestMigrationOpsState:
         return {}
 
     def test_create_table_apply_to_state(self):
-        from dynamo_backend.fields import CharField
-        from dynamo_backend.migration_ops import CreateTable
+        from dynamo_backend.legacy.fields import CharField
+        from dynamo_backend.legacy.migration_ops import CreateTable
 
         op = CreateTable(
             app_label="myapp",
@@ -133,8 +136,8 @@ class TestMigrationOpsState:
         assert "title" in state["myapp.MyModel"]["fields"]
 
     def test_add_field_apply_to_state(self):
-        from dynamo_backend.fields import BooleanField, CharField
-        from dynamo_backend.migration_ops import CreateTable, AddField
+        from dynamo_backend.legacy.fields import BooleanField, CharField
+        from dynamo_backend.legacy.migration_ops import CreateTable, AddField
 
         state: Dict = {}
         CreateTable("app", "M", "app_m", [("name", CharField())]).apply_to_state(state)
@@ -142,8 +145,8 @@ class TestMigrationOpsState:
         assert "active" in state["app.M"]["fields"]
 
     def test_remove_field_apply_to_state(self):
-        from dynamo_backend.fields import CharField
-        from dynamo_backend.migration_ops import CreateTable, RemoveField
+        from dynamo_backend.legacy.fields import CharField
+        from dynamo_backend.legacy.migration_ops import CreateTable, RemoveField
 
         state: Dict = {}
         CreateTable("app", "M", "app_m", [("name", CharField())]).apply_to_state(state)
@@ -151,8 +154,8 @@ class TestMigrationOpsState:
         assert "name" not in state["app.M"]["fields"]
 
     def test_alter_field_apply_to_state(self):
-        from dynamo_backend.fields import CharField, IntegerField
-        from dynamo_backend.migration_ops import CreateTable, AlterField
+        from dynamo_backend.legacy.fields import CharField, IntegerField
+        from dynamo_backend.legacy.migration_ops import CreateTable, AlterField
 
         state: Dict = {}
         CreateTable("app", "M", "app_m", [("score", CharField())]).apply_to_state(state)
@@ -160,8 +163,8 @@ class TestMigrationOpsState:
         assert state["app.M"]["fields"]["score"]["type"] == "IntegerField"
 
     def test_add_index_apply_to_state(self):
-        from dynamo_backend.fields import CharField
-        from dynamo_backend.migration_ops import CreateTable, AddIndex
+        from dynamo_backend.legacy.fields import CharField
+        from dynamo_backend.legacy.migration_ops import CreateTable, AddIndex
 
         state: Dict = {}
         CreateTable("app", "M", "app_m", [("slug", CharField())]).apply_to_state(state)
@@ -169,8 +172,8 @@ class TestMigrationOpsState:
         assert state["app.M"]["fields"]["slug"].get("index") is True
 
     def test_remove_index_apply_to_state(self):
-        from dynamo_backend.fields import CharField
-        from dynamo_backend.migration_ops import CreateTable, AddIndex, RemoveIndex
+        from dynamo_backend.legacy.fields import CharField
+        from dynamo_backend.legacy.migration_ops import CreateTable, AddIndex, RemoveIndex
 
         state: Dict = {}
         CreateTable("app", "M", "app_m", [("slug", CharField(index=True))]).apply_to_state(state)
@@ -185,8 +188,8 @@ class TestMigrationOpsState:
 
 class TestMigrationOpsDB:
     def test_create_table_creates_dynamodb_table(self):
-        from dynamo_backend.fields import CharField
-        from dynamo_backend.migration_ops import CreateTable
+        from dynamo_backend.legacy.fields import CharField
+        from dynamo_backend.legacy.migration_ops import CreateTable
         from dynamo_backend.connection import get_client
 
         state: Dict = {}
@@ -199,8 +202,8 @@ class TestMigrationOpsDB:
         assert resp["Table"]["TableStatus"] == "ACTIVE"
 
     def test_create_table_idempotent(self):
-        from dynamo_backend.fields import CharField
-        from dynamo_backend.migration_ops import CreateTable
+        from dynamo_backend.legacy.fields import CharField
+        from dynamo_backend.legacy.migration_ops import CreateTable
 
         state: Dict = {}
         op = CreateTable("app", "Thing", "app_thing2", [("name", CharField())])
@@ -211,8 +214,8 @@ class TestMigrationOpsDB:
 
     def test_add_field_backfills_existing_items(self):
         """AddField.apply_to_db should set the default value on existing items."""
-        from dynamo_backend.fields import CharField, BooleanField
-        from dynamo_backend.migration_ops import CreateTable, AddField
+        from dynamo_backend.legacy.fields import CharField, BooleanField
+        from dynamo_backend.legacy.migration_ops import CreateTable, AddField
         from dynamo_backend.connection import get_resource
 
         state: Dict = {}
@@ -240,8 +243,8 @@ class TestMigrationOpsDB:
             assert item.get("published") is False
 
     def test_add_field_no_default_skips_backfill(self):
-        from dynamo_backend.fields import CharField
-        from dynamo_backend.migration_ops import CreateTable, AddField
+        from dynamo_backend.legacy.fields import CharField
+        from dynamo_backend.legacy.migration_ops import CreateTable, AddField
         from dynamo_backend.connection import get_resource
 
         state: Dict = {}
@@ -261,8 +264,8 @@ class TestMigrationOpsDB:
 
     def test_remove_field_is_noop_on_db(self):
         """RemoveField never touches DynamoDB (it's schemaless)."""
-        from dynamo_backend.fields import CharField
-        from dynamo_backend.migration_ops import CreateTable, RemoveField
+        from dynamo_backend.legacy.fields import CharField
+        from dynamo_backend.legacy.migration_ops import CreateTable, RemoveField
 
         state: Dict = {}
         CreateTable("bl", "X", "bl_x", [("tag", CharField())]).apply_to_state(state)
@@ -277,7 +280,7 @@ class TestMigrationOpsDB:
 
 class TestMigrationRecorder:
     def test_ensure_history_table_creates_table(self):
-        from dynamo_backend.migration_recorder import MigrationRecorder
+        from dynamo_backend.legacy.migration_recorder import MigrationRecorder
         from dynamo_backend.connection import get_client
 
         r = MigrationRecorder()
@@ -287,7 +290,7 @@ class TestMigrationRecorder:
         assert resp["Table"]["TableStatus"] == "ACTIVE"
 
     def test_record_and_query_applied(self):
-        from dynamo_backend.migration_recorder import MigrationRecorder
+        from dynamo_backend.legacy.migration_recorder import MigrationRecorder
 
         r = MigrationRecorder()
         r.ensure_history_table()
@@ -296,7 +299,7 @@ class TestMigrationRecorder:
         assert ("demo_app", "0001_initial") in r.applied_migrations()
 
     def test_record_unapplied(self):
-        from dynamo_backend.migration_recorder import MigrationRecorder
+        from dynamo_backend.legacy.migration_recorder import MigrationRecorder
 
         r = MigrationRecorder()
         r.ensure_history_table()
@@ -305,7 +308,7 @@ class TestMigrationRecorder:
         assert ("demo_app", "0001_initial") not in r.applied_migrations()
 
     def test_multiple_apps_independent(self):
-        from dynamo_backend.migration_recorder import MigrationRecorder
+        from dynamo_backend.legacy.migration_recorder import MigrationRecorder
 
         r = MigrationRecorder()
         r.ensure_history_table()
@@ -325,10 +328,10 @@ class TestMigrationAutodetector:
         return {key: {"table_name": table, "fields": fields_dict}}
 
     def test_detect_new_model(self):
-        from dynamo_backend.migration_autodetector import detect_changes
-        from dynamo_backend.fields import CharField
-        from dynamo_backend.migration_fields import field_to_dict
-        from dynamo_backend.migration_ops import CreateTable
+        from dynamo_backend.legacy.migration_autodetector import detect_changes
+        from dynamo_backend.legacy.fields import CharField
+        from dynamo_backend.legacy.migration_fields import field_to_dict
+        from dynamo_backend.legacy.migration_ops import CreateTable
 
         live = {
             "myapp.Post": {
@@ -342,10 +345,10 @@ class TestMigrationAutodetector:
         assert ops[0].model_name == "Post"
 
     def test_detect_new_field(self):
-        from dynamo_backend.migration_autodetector import detect_changes
-        from dynamo_backend.fields import CharField, BooleanField
-        from dynamo_backend.migration_fields import field_to_dict
-        from dynamo_backend.migration_ops import AddField
+        from dynamo_backend.legacy.migration_autodetector import detect_changes
+        from dynamo_backend.legacy.fields import CharField, BooleanField
+        from dynamo_backend.legacy.migration_fields import field_to_dict
+        from dynamo_backend.legacy.migration_ops import AddField
 
         base_fields = {"title": field_to_dict(CharField(max_length=200))}
         mig_state = {"myapp.Post": {"table_name": "myapp_post", "fields": base_fields}}
@@ -364,10 +367,10 @@ class TestMigrationAutodetector:
         assert add_ops[0].field_name == "public"
 
     def test_detect_removed_field(self):
-        from dynamo_backend.migration_autodetector import detect_changes
-        from dynamo_backend.fields import CharField, BooleanField
-        from dynamo_backend.migration_fields import field_to_dict
-        from dynamo_backend.migration_ops import RemoveField
+        from dynamo_backend.legacy.migration_autodetector import detect_changes
+        from dynamo_backend.legacy.fields import CharField, BooleanField
+        from dynamo_backend.legacy.migration_fields import field_to_dict
+        from dynamo_backend.legacy.migration_ops import RemoveField
 
         base_fields = {
             "title": field_to_dict(CharField(max_length=200)),
@@ -386,10 +389,10 @@ class TestMigrationAutodetector:
         assert rm_ops[0].field_name == "legacy"
 
     def test_detect_new_index(self):
-        from dynamo_backend.migration_autodetector import detect_changes
-        from dynamo_backend.fields import CharField
-        from dynamo_backend.migration_fields import field_to_dict
-        from dynamo_backend.migration_ops import AddIndex
+        from dynamo_backend.legacy.migration_autodetector import detect_changes
+        from dynamo_backend.legacy.fields import CharField
+        from dynamo_backend.legacy.migration_fields import field_to_dict
+        from dynamo_backend.legacy.migration_ops import AddIndex
 
         mig_state = {
             "myapp.Tag": {
@@ -409,9 +412,9 @@ class TestMigrationAutodetector:
         assert idx_ops[0].field_name == "slug"
 
     def test_no_changes(self):
-        from dynamo_backend.migration_autodetector import detect_changes
-        from dynamo_backend.fields import CharField
-        from dynamo_backend.migration_fields import field_to_dict
+        from dynamo_backend.legacy.migration_autodetector import detect_changes
+        from dynamo_backend.legacy.fields import CharField
+        from dynamo_backend.legacy.migration_fields import field_to_dict
 
         fields = {"title": field_to_dict(CharField(max_length=200))}
         state = {"myapp.Post": {"table_name": "myapp_post", "fields": fields}}
@@ -419,10 +422,10 @@ class TestMigrationAutodetector:
         assert ops == []
 
     def test_different_app_label_ignored(self):
-        from dynamo_backend.migration_autodetector import detect_changes
-        from dynamo_backend.fields import CharField
-        from dynamo_backend.migration_fields import field_to_dict
-        from dynamo_backend.migration_ops import CreateTable
+        from dynamo_backend.legacy.migration_autodetector import detect_changes
+        from dynamo_backend.legacy.fields import CharField
+        from dynamo_backend.legacy.migration_fields import field_to_dict
+        from dynamo_backend.legacy.migration_ops import CreateTable
 
         live = {
             "other_app.Thing": {
@@ -440,9 +443,9 @@ class TestMigrationAutodetector:
 
 class TestMigrationWriter:
     def test_as_string_create_table(self):
-        from dynamo_backend.fields import CharField
-        from dynamo_backend.migration_ops import CreateTable
-        from dynamo_backend.migration_writer import MigrationWriter
+        from dynamo_backend.legacy.fields import CharField
+        from dynamo_backend.legacy.migration_ops import CreateTable
+        from dynamo_backend.legacy.migration_writer import MigrationWriter
 
         op = CreateTable("myapp", "Post", "myapp_post", [("title", CharField(max_length=200))])
         writer = MigrationWriter(
@@ -458,9 +461,9 @@ class TestMigrationWriter:
         assert "dependencies = []" in src
 
     def test_as_string_with_dependencies(self):
-        from dynamo_backend.fields import BooleanField
-        from dynamo_backend.migration_ops import AddField
-        from dynamo_backend.migration_writer import MigrationWriter
+        from dynamo_backend.legacy.fields import BooleanField
+        from dynamo_backend.legacy.migration_ops import AddField
+        from dynamo_backend.legacy.migration_writer import MigrationWriter
 
         op = AddField("myapp", "Post", "active", BooleanField(default=True))
         writer = MigrationWriter(
@@ -475,9 +478,9 @@ class TestMigrationWriter:
         assert "active" in src
 
     def test_write_creates_file(self):
-        from dynamo_backend.fields import CharField
-        from dynamo_backend.migration_ops import CreateTable
-        from dynamo_backend.migration_writer import MigrationWriter
+        from dynamo_backend.legacy.fields import CharField
+        from dynamo_backend.legacy.migration_ops import CreateTable
+        from dynamo_backend.legacy.migration_writer import MigrationWriter
 
         op = CreateTable("myapp", "Post", "myapp_post", [("title", CharField())])
         writer = MigrationWriter("myapp", "0001_initial", [op], [])
@@ -492,9 +495,9 @@ class TestMigrationWriter:
             assert "CreateTable" in content
 
     def test_written_file_is_importable(self):
-        from dynamo_backend.fields import CharField
-        from dynamo_backend.migration_ops import CreateTable
-        from dynamo_backend.migration_writer import MigrationWriter
+        from dynamo_backend.legacy.fields import CharField
+        from dynamo_backend.legacy.migration_ops import CreateTable
+        from dynamo_backend.legacy.migration_writer import MigrationWriter
 
         op = CreateTable("myapp", "Post", "myapp_post", [("title", CharField())])
         writer = MigrationWriter("myapp", "0001_initial", [op], [])
@@ -529,9 +532,9 @@ class TestMigrationExecutor:
             f.write(content)
 
     def test_migrate_applies_pending(self):
-        from dynamo_backend.migration_loader import MigrationLoader
-        from dynamo_backend.migration_recorder import MigrationRecorder
-        from dynamo_backend.migration_executor import MigrationExecutor
+        from dynamo_backend.legacy.migration_loader import MigrationLoader
+        from dynamo_backend.legacy.migration_recorder import MigrationRecorder
+        from dynamo_backend.legacy.migration_executor import MigrationExecutor
         from dynamo_backend.connection import get_client
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -573,9 +576,9 @@ class TestMigrationExecutor:
                 assert ("fakeapp", "0001_initial") in applied
 
     def test_migrate_is_idempotent(self):
-        from dynamo_backend.migration_loader import MigrationLoader
-        from dynamo_backend.migration_recorder import MigrationRecorder
-        from dynamo_backend.migration_executor import MigrationExecutor
+        from dynamo_backend.legacy.migration_loader import MigrationLoader
+        from dynamo_backend.legacy.migration_recorder import MigrationRecorder
+        from dynamo_backend.legacy.migration_executor import MigrationExecutor
 
         with tempfile.TemporaryDirectory() as tmpdir:
             mig_dir = os.path.join(tmpdir, "dynamo_migrations")
@@ -612,9 +615,9 @@ class TestMigrationExecutor:
                 assert len(recorded) == 1
 
     def test_migration_status_shows_applied_flag(self):
-        from dynamo_backend.migration_loader import MigrationLoader
-        from dynamo_backend.migration_recorder import MigrationRecorder
-        from dynamo_backend.migration_executor import MigrationExecutor
+        from dynamo_backend.legacy.migration_loader import MigrationLoader
+        from dynamo_backend.legacy.migration_recorder import MigrationRecorder
+        from dynamo_backend.legacy.migration_executor import MigrationExecutor
 
         with tempfile.TemporaryDirectory() as tmpdir:
             mig_dir = os.path.join(tmpdir, "dynamo_migrations")

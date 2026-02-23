@@ -173,25 +173,30 @@ curl "http://localhost:8000/api/posts/search/?q=django"
 
 ## Migrations
 
-DDBDjango includes a custom migration system for DynamoDB schema evolution.
+DDBDjango uses **standard Django migrations** to manage schema changes.
 
 ### Create migrations
 
 ```bash
-python manage.py dmakemigrations
+python manage.py makemigrations
 ```
 
 ### Apply migrations
 
 ```bash
-python manage.py dmigrate
+python manage.py migrate
 ```
 
-Migrations support:
-- Adding/removing fields
-- Creating/deleting tables
-- Adding/removing GSI indexes
-- Field type changes
+**How it works:**
+- **`create_model`** - Creates DynamoDB table with GSIs for indexed fields
+- **`delete_model`** - Deletes DynamoDB table
+- **`add_field` / `remove_field`** - No-op (DynamoDB is schemaless)
+- **`add_index` / `remove_index`** - Creates/deletes GSIs
+
+DynamoDB is schemaless, so most field changes don't require migrations. You only need migrations when:
+- Creating/deleting models (tables)
+- Adding/removing indexes (`db_index=True`)
+- Adding/removing ForeignKey fields (creates GSIs)
 
 ---
 
@@ -464,7 +469,7 @@ class PostAdmin(admin.ModelAdmin):
 docker-compose up -d
 
 # Run migrations
-python manage.py dmigrate
+python manage.py migrate
 
 # Seed data
 python manage.py seed_posts

@@ -1,7 +1,10 @@
 """
-tests/test_dynamo_backend.py
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Unit tests for the dynamo_backend library, using moto to mock DynamoDB.
+tests/test_legacy_dynamomodel.py
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Unit tests for the LEGACY dynamo_backend.legacy.DynamoModel API.
+
+**NOTE:** This tests the deprecated DynamoModel-based approach.
+For the current standard Django models approach, see test_demo_app.py
 
 Coverage:
   - Field validation (CharField, IntegerField, BooleanField, DateTimeField,
@@ -22,12 +25,12 @@ from dynamo_backend.exceptions import (
     DynamoMultipleObjectsReturned,
     DynamoValidationError,
 )
-from dynamo_backend.fields import (
+from dynamo_backend.legacy.fields import (
     CharField, IntegerField, FloatField, BooleanField,
     DateTimeField, JSONField, UUIDField, ListField,
 )
-from dynamo_backend.models import DynamoModel
-from dynamo_backend.table import ensure_table, delete_table
+from dynamo_backend.legacy.models import DynamoModel
+from dynamo_backend.legacy.table import ensure_table, delete_table
 
 
 # ─────────────────────────────────── test model definitions

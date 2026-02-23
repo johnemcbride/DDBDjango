@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
-from .exceptions import DynamoValidationError
+from ..exceptions import DynamoValidationError
 
 
 class Field:

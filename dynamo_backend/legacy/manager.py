@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from .queryset import DynamoQuerySet
-from .connection import get_resource, table_name as prefixed
+from ..connection import get_resource, table_name as prefixed
 
 
 class DynamoManager:

@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "django-dynamodb-backend"
+version = "0.1.0"
+description = "A Django database backend for AWS DynamoDB with OpenSearch integration"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "John McBride", email = "john.e.mcbride@icloud.com"}
+]
+keywords = ["django", "dynamodb", "aws", "opensearch", "database", "backend"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: Django",
+    "Framework :: Django :: 4.0",
+    "Framework :: Django :: 5.0",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Database",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+    "django>=4.0",
+    "boto3>=1.34",
+    "botocore>=1.34",
+    "opensearch-py>=2.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-django>=4.8",
+    "moto[dynamodb]>=5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/johnemcbride/DDBDjango"
+Repository = "https://github.com/johnemcbride/DDBDjango"
+Issues = "https://github.com/johnemcbride/DDBDjango/issues"
+
+[tool.setuptools]
+packages = [
+    "dynamo_backend",
+    "dynamo_backend.backends",
+    "dynamo_backend.backends.dynamodb",
+    "dynamo_backend.management",
+    "dynamo_backend.management.commands",
+    "dynamo_backend.legacy",
+]
+
+[tool.setuptools.package-data]
+dynamo_backend = ["py.typed"]

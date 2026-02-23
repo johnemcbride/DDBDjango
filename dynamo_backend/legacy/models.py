@@ -29,10 +29,10 @@ import copy
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Type
 
-from .exceptions import DynamoObjectNotFound, DynamoValidationError, DynamoMultipleObjectsReturned
+from ..exceptions import DynamoObjectNotFound, DynamoValidationError, DynamoMultipleObjectsReturned
 from .fields import Field, UUIDField, DateTimeField
 from .manager import DynamoManager
-from .connection import get_resource, table_name as prefixed
+from ..connection import get_resource, table_name as prefixed
 
 
 # Global registry of all concrete DynamoModel subclasses.

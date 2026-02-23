@@ -1,12 +1,15 @@
 """
-dynamo_backend.admin
-~~~~~~~~~~~~~~~~~~~~~
+dynamo_backend.legacy.admin
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 DynamoModelAdmin — a Django ModelAdmin subclass that works with DynamoModel
 instead of Django ORM models.
 
+**DEPRECATED:** This is part of the legacy DynamoModel API.
+Use standard django.contrib.admin.ModelAdmin with the new backend instead.
+
 Usage in your app's admin.py::
 
-    from dynamo_backend.admin import DynamoModelAdmin
+    from dynamo_backend.legacy.admin import DynamoModelAdmin
     from django.contrib import admin
     from .models import Author, Post
 

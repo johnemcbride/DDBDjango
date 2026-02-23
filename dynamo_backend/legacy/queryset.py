@@ -37,8 +37,8 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import ClientError
 
-from .connection import get_resource, table_name as prefixed
-from .exceptions import DynamoObjectNotFound, DynamoMultipleObjectsReturned
+from ..connection import get_resource, table_name as prefixed
+from ..exceptions import DynamoObjectNotFound, DynamoMultipleObjectsReturned
 
 
 class DynamoQuerySet:
