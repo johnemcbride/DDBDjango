@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en" data-bs-theme="light">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>{% block title %}DDBlog{% endblock %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"/>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet"/>
+  <style>
+    :root {
+      --accent: #4f6ef7;
+      --accent-soft: #eef0fe;
+    }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background:#f6f7fb; }
+    /* Navbar */
+    .navbar-brand span { color: var(--accent); font-weight: 700; }
+    /* Tags */
+    .tag-pill {
+      display: inline-block;
+      padding: .2em .65em;
+      border-radius: 999px;
+      font-size: .72rem;
+      font-weight: 600;
+      text-decoration: none;
+      line-height: 1.4;
+      border: 1.5px solid transparent;
+    }
+    .tag-pill:hover { filter: brightness(.9); }
+    /* Post cards */
+    .post-card { border: none; border-radius: 12px; transition: box-shadow .15s; }
+    .post-card:hover { box-shadow: 0 6px 24px rgba(79,110,247,.13); }
+    .post-card .card-title a { color: #1a1a2e; text-decoration: none; font-weight: 700; }
+    .post-card .card-title a:hover { color: var(--accent); }
+    .post-meta { font-size: .8rem; color: #888; }
+    /* Author avatar placeholder */
+    .avatar { width: 48px; height: 48px; border-radius: 50%; background: var(--accent-soft);
+               display:flex; align-items:center; justify-content:center;
+               font-size: 1.3rem; font-weight:700; color: var(--accent); flex-shrink:0; }
+    .avatar-lg { width: 80px; height: 80px; font-size: 2rem; }
+    /* Sidebar */
+    .sidebar-section { margin-bottom: 1.8rem; }
+    .sidebar-section h6 { font-size: .72rem; letter-spacing: .08em; text-transform: uppercase;
+                           color: #aaa; font-weight: 700; margin-bottom: .7rem; }
+    /* Body text */
+    .post-body { font-size: 1.05rem; line-height: 1.8; color: #333; }
+    .post-body p { margin-bottom: 1.1em; }
+    /* Comments */
+    .comment-card { background: #fff; border-radius: 10px; padding: 1rem 1.2rem;
+                    border-left: 3px solid var(--accent-soft); margin-bottom: .8rem; }
+    .comment-card .c-name { font-weight: 700; font-size: .88rem; }
+    .comment-card .c-date { font-size: .75rem; color: #aaa; }
+    /* Revision timeline */
+    .rev-item { position:relative; padding-left: 1.5rem; margin-bottom: .8rem; }
+    .rev-item::before { content:''; position:absolute; left: 4px; top:6px; width:8px; height:8px;
+                         border-radius:50%; background: var(--accent); }
+    .rev-item::after { content:''; position:absolute; left:7px; top:14px; width:2px;
+                        height:calc(100% + 4px); background: #e0e4f7; }
+    .rev-item:last-child::after { display:none; }
+    /* Flash messages */
+    .messages-wrap { position: fixed; top: 70px; right: 1rem; z-index: 9999; min-width: 260px; }
+    /* Breadcrumb */
+    .breadcrumb { background: none; padding: 0; margin-bottom: .2rem; font-size: .83rem; }
+    /* Category badge */
+    .cat-badge { background: #e8faea; color: #1a6b3c; border-radius: 6px; padding: .18em .5em;
+                  font-size: .75rem; font-weight:600; text-decoration:none; }
+    .cat-badge:hover { background: #c9f0d3; color: #1a6b3c; }
+    /* Hero */
+    .feed-hero { background: linear-gradient(135deg, #4f6ef7 0%, #7c4dff 100%);
+                  border-radius: 16px; color: #fff; padding: 2.5rem 2rem; margin-bottom: 2rem; }
+    .feed-hero h1 { font-weight: 800; font-size: 2rem; margin-bottom: .3rem; }
+    .feed-hero p { opacity: .85; margin: 0; }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+
+<!-- Navbar -->
+<nav class="navbar navbar-expand-md navbar-light bg-white shadow-sm sticky-top">
+  <div class="container">
+    <a class="navbar-brand d-flex align-items-center gap-2" href="{% url 'home' %}">
+      <i class="bi bi-database-fill" style="color:var(--accent)"></i>
+      <span>DDB</span><span class="text-dark fw-light">log</span>
+    </a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navmenu">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navmenu">
+      <ul class="navbar-nav me-auto gap-1">
+        <li class="nav-item">
+          <a class="nav-link {% block nav_home %}{% endblock %}" href="{% url 'home' %}">
+            <i class="bi bi-house"></i> Home
+          </a>
+        </li>
+      </ul>
+      <form class="d-flex gap-2" method="get" action="{% url 'home' %}">
+        <input class="form-control form-control-sm" name="q" placeholder="Search posts…"
+               value="{{ q|default:'' }}" style="width:200px"/>
+        <button class="btn btn-sm btn-outline-secondary" type="submit">
+          <i class="bi bi-search"></i>
+        </button>
+      </form>
+
+      {% if user.is_authenticated %}
+      <!-- Authenticated: Write + user dropdown -->
+      <a href="{% url 'write-post' %}" class="btn btn-sm ms-3"
+         style="background:var(--accent);color:#fff;border-radius:8px">
+        <i class="bi bi-pencil-square"></i> Write
+      </a>
+      <div class="dropdown ms-2">
+        <button class="btn btn-sm btn-outline-secondary dropdown-toggle d-flex align-items-center gap-1"
+                type="button" data-bs-toggle="dropdown" style="border-radius:8px">
+          <i class="bi bi-person-circle"></i>
+          <span class="d-none d-md-inline" style="max-width:120px; overflow:hidden; text-overflow:ellipsis">
+            {{ user.email|default:user.username }}
+          </span>
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="border-radius:10px;border:none">
+          <li><span class="dropdown-item-text small text-muted">{{ user.email }}</span></li>
+          <li><hr class="dropdown-divider"/></li>
+          <li>
+            <form method="POST" action="{% url 'account_logout' %}" class="d-inline">
+              {% csrf_token %}
+              <button type="submit" class="dropdown-item text-danger">
+                <i class="bi bi-box-arrow-right me-1"></i>Sign Out
+              </button>
+            </form>
+          </li>
+        </ul>
+      </div>
+      {% else %}
+      <!-- Not authenticated: Sign In button -->
+      <a href="{% url 'account_login' %}" class="btn btn-sm ms-3"
+         style="background:var(--accent);color:#fff;border-radius:8px">
+        <i class="bi bi-box-arrow-in-right me-1"></i>Sign In
+      </a>
+      {% endif %}
+    </div>
+  </div>
+</nav>
+
+<!-- Flash messages -->
+{% if messages %}
+<div class="messages-wrap">
+  {% for msg in messages %}
+  <div class="alert alert-{{ msg.tags|default:'info' }} alert-dismissible shadow-sm" role="alert">
+    {{ msg }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<!-- Content -->
+<div class="container py-4">
+  {% block content %}{% endblock %}
+</div>
+
+<!-- Footer -->
+<footer class="text-center text-muted py-4" style="font-size:.8rem; border-top:1px solid #e8e8ee; background:#fff; margin-top: 3rem;">
+  DDBlog · Django + DynamoDB via LocalStack
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,91 @@
+{% extends "demo_app/base.html" %}
+{% block title %}{{ cat.name }} · DDBlog{% endblock %}
+
+{% block content %}
+<!-- Breadcrumb -->
+{% if breadcrumb|length > 1 %}
+<nav>
+  <ol class="breadcrumb mb-3">
+    <li class="breadcrumb-item"><a href="{% url 'home' %}">Home</a></li>
+    {% for bc in breadcrumb %}
+    {% if not forloop.last %}
+    <li class="breadcrumb-item">
+      <a href="{% url 'category-detail-fe' slug=bc.slug %}">{{ bc.name }}</a>
+    </li>
+    {% else %}
+    <li class="breadcrumb-item active">{{ bc.name }}</li>
+    {% endif %}
+    {% endfor %}
+  </ol>
+</nav>
+{% endif %}
+
+<div class="row g-4">
+  <div class="col-lg-8">
+
+    <div class="feed-hero mb-4">
+      <h1><i class="bi bi-folder-fill me-2"></i>{{ cat.name }}</h1>
+      {% if cat.description %}
+      <p class="mb-0 opacity-85">{{ cat.description }}</p>
+      {% else %}
+      <p class="mb-0 opacity-75">{{ posts|length }} post{{ posts|length|pluralize }}</p>
+      {% endif %}
+    </div>
+
+    <!-- Subcategories -->
+    {% if subcats %}
+    <div class="mb-4">
+      <h6 class="text-muted text-uppercase small fw-bold mb-2">Sub-categories</h6>
+      <div class="d-flex flex-wrap gap-2">
+        {% for sub in subcats %}
+        <a href="{% url 'category-detail-fe' slug=sub.slug %}"
+           class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1">
+          <i class="bi bi-folder2"></i> {{ sub.name }}
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Posts -->
+    {% for post in posts %}
+    <div class="card post-card border-0 shadow-sm mb-3">
+      <div class="card-body p-4">
+        <div class="d-flex flex-wrap gap-2 mb-1">
+          {% for label in post.label_list %}
+          <a href="{% url 'tag-detail-fe' slug=label.slug %}" class="tag-pill"
+             style="background:{{ label.colour }}22; color:{{ label.colour }}; border-color:{{ label.colour }}44">
+            {{ label.name }}
+          </a>
+          {% endfor %}
+        </div>
+        <h5 class="card-title mb-1">
+          <a href="{% url 'post-detail' pk=post.pk %}">{{ post.title }}</a>
+        </h5>
+        <p class="post-meta mb-2">
+          {% if post.author_obj %}
+          <a href="{% url 'author-detail-fe' pk=post.author_obj.pk %}" class="text-decoration-none text-muted">
+            <i class="bi bi-person me-1"></i>{{ post.author_obj.username }}
+          </a> ·
+          {% endif %}
+          <i class="bi bi-calendar3 me-1"></i>{{ post.created_at|date:"M j, Y" }}
+          · <i class="bi bi-eye me-1"></i>{{ post.view_count }} view{{ post.view_count|pluralize }}
+        </p>
+        {% if post.body %}
+        <p class="text-muted small mb-2">{{ post.body|truncatechars:180 }}</p>
+        {% endif %}
+        <a href="{% url 'post-detail' pk=post.pk %}" class="btn btn-sm btn-outline-primary">
+          Read more <i class="bi bi-arrow-right"></i>
+        </a>
+      </div>
+    </div>
+    {% empty %}
+    <p class="text-muted">No posts in this category yet.</p>
+    {% endfor %}
+
+    <a href="{% url 'home' %}" class="btn btn-sm btn-outline-secondary mt-2">
+      <i class="bi bi-arrow-left me-1"></i> All posts
+    </a>
+  </div>
+</div>
+{% endblock %}

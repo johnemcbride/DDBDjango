@@ -1,0 +1,28 @@
+{% extends "demo_app/base.html" %}
+{% load i18n %}
+
+{% block title %}Sign Out · DDBlog{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-sm-8 col-md-5 col-lg-4">
+    <div class="card border-0 shadow-sm text-center" style="border-radius:14px">
+      <div class="card-body p-4">
+        <i class="bi bi-box-arrow-right mb-3 d-block" style="font-size:2.5rem;color:var(--accent)"></i>
+        <h5 class="fw-bold mb-2">{% trans "Sign Out?" %}</h5>
+        <p class="text-muted small mb-4">{% trans "Are you sure you want to sign out?" %}</p>
+        <form method="POST" action="{% url 'account_logout' %}">
+          {% csrf_token %}
+          <button type="submit" class="btn w-100 py-2 fw-semibold text-white mb-2"
+                  style="background:var(--accent);border-radius:8px">
+            <i class="bi bi-box-arrow-right me-1"></i>{% trans "Sign Out" %}
+          </button>
+        </form>
+        <a href="{{ request.META.HTTP_REFERER|default:'/' }}" class="btn btn-outline-secondary w-100 py-2" style="border-radius:8px">
+          {% trans "Cancel" %}
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

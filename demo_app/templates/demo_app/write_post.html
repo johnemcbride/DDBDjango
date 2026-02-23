@@ -1,0 +1,151 @@
+{% extends "demo_app/base.html" %}
+{% block title %}Write a Post · DDBlog{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-9">
+
+    <div class="d-flex align-items-center gap-3 mb-4">
+      <a href="{% url 'home' %}" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i>
+      </a>
+      <h2 class="fw-800 mb-0" style="font-weight:800">Write a Post</h2>
+    </div>
+
+    {% if not authors %}
+    <div class="alert alert-warning d-flex gap-2 align-items-center">
+      <i class="bi bi-exclamation-triangle-fill"></i>
+      <div>
+        No authors exist yet. You can create one via the
+        <a href="/api/authors/" target="_blank">API</a> or the
+        <a href="/explorer/">explorer</a>.
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="card border-0 shadow-sm" style="border-radius:14px">
+      <div class="card-body p-4 p-md-5">
+        <form method="post" action="{% url 'write-post' %}">
+          {% csrf_token %}
+
+          <!-- Title -->
+          <div class="mb-4">
+            <label class="form-label fw-semibold">Title <span class="text-danger">*</span></label>
+            <input type="text" name="title" class="form-control form-control-lg"
+                   placeholder="An interesting title…" required
+                   oninput="updateSlug(this.value)"/>
+          </div>
+
+          <!-- Slug (auto-filled) -->
+          <div class="mb-4">
+            <label class="form-label fw-semibold text-muted small">Slug</label>
+            <input type="text" name="slug" id="slug-field" class="form-control form-control-sm"
+                   placeholder="auto-generated from title"/>
+            <div class="form-text">Leave blank to auto-generate from title.</div>
+          </div>
+
+          <!-- Author -->
+          <div class="mb-4">
+            <label class="form-label fw-semibold">Author <span class="text-danger">*</span></label>
+            {% if authors %}
+            <select name="author_id" class="form-select" required>
+              <option value="">— select an author —</option>
+              {% for author in authors %}
+              <option value="{{ author.pk }}">{{ author.username }}{% if author.email %} ({{ author.email }}){% endif %}</option>
+              {% endfor %}
+            </select>
+            {% else %}
+            <input type="text" name="author_id" class="form-control" placeholder="No authors yet — create one first"/>
+            {% endif %}
+          </div>
+
+          <!-- Body -->
+          <div class="mb-4">
+            <label class="form-label fw-semibold">Body</label>
+            <textarea name="body" class="form-control" rows="14"
+                      placeholder="Write your post here…" style="font-size:.95rem; line-height:1.7"></textarea>
+          </div>
+
+          <!-- Labels (tags) -->
+          {% if tags %}
+          <div class="mb-4">
+            <label class="form-label fw-semibold">Labels</label>
+            <div class="d-flex flex-wrap gap-2">
+              {% for tag in tags %}
+              <div class="form-check form-check-inline">
+                <input class="form-check-input" type="checkbox" name="label_ids"
+                       value="{{ tag.pk }}" id="tag-{{ tag.pk }}"/>
+                <label class="form-check-label" for="tag-{{ tag.pk }}">
+                  <span class="tag-pill"
+                        style="background:{{ tag.colour }}22; color:{{ tag.colour }}; border-color:{{ tag.colour }}44; cursor:pointer">
+                    {{ tag.name }}
+                  </span>
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          <!-- Categories -->
+          {% if categories %}
+          <div class="mb-4">
+            <label class="form-label fw-semibold">Categories</label>
+            <div class="d-flex flex-wrap gap-2">
+              {% for cat in categories %}
+              <div class="form-check form-check-inline">
+                <input class="form-check-input" type="checkbox" name="category_ids"
+                       value="{{ cat.pk }}" id="cat-{{ cat.pk }}"/>
+                <label class="form-check-label" for="cat-{{ cat.pk }}">
+                  <span class="cat-badge" style="cursor:pointer">
+                    <i class="bi bi-folder2 me-1"></i>{{ cat.name }}
+                    {% if cat.parent_id %}<span class="text-muted small fw-normal"> ↳ child</span>{% endif %}
+                  </span>
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          <!-- Publish toggle -->
+          <div class="mb-4">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" name="published" id="published" checked/>
+              <label class="form-check-label fw-semibold" for="published">Publish immediately</label>
+            </div>
+            <div class="form-text">Unchecked = Save as draft.</div>
+          </div>
+
+          <div class="d-flex gap-3">
+            <button type="submit" class="btn btn-lg px-5"
+                    style="background:var(--accent);color:#fff;border-radius:10px;border:none">
+              <i class="bi bi-send me-2"></i> Publish
+            </button>
+            <a href="{% url 'home' %}" class="btn btn-lg btn-outline-secondary" style="border-radius:10px">
+              Cancel
+            </a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function updateSlug(title) {
+  const slugField = document.getElementById('slug-field');
+  if (!slugField.dataset.manual) {
+    slugField.value = title.toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, '')
+      .trim()
+      .replace(/\s+/g, '-');
+  }
+}
+document.getElementById('slug-field').addEventListener('input', function() {
+  this.dataset.manual = '1';
+});
+</script>
+{% endblock %}

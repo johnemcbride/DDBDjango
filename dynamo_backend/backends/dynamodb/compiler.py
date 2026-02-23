@@ -944,7 +944,11 @@ def _do_scan(
     low_mark: int = 0,
     high_mark: int | None = None,
     where_node=None,
+    scan_limit: int | None = None,  # convenience alias for high_mark (used by has_results)
 ) -> list:
+    # scan_limit is a shorthand: treat it as high_mark when not otherwise set
+    if scan_limit is not None and high_mark is None:
+        high_mark = scan_limit
     """Cursor-aware full-table scan.
 
     Uses a process-level cursor cache to avoid re-scanning rows already consumed
@@ -1386,6 +1390,16 @@ class SQLInsertCompiler(BaseSQLInsertCompiler):
                 current = getattr(obj, field.attname, None)
                 if value != current:
                     setattr(obj, field.attname, value)
+
+            # AutoField hash key: DDB tables always use AttributeType 'S' for the
+            # pk column. If an explicit integer pk was passed (e.g. Site.id=1),
+            # _to_dynamo_value leaves it as int — convert to string only for the
+            # hash-key attribute, NOT for FK/GSI attributes (those use Number 'N').
+            import django.db.models.fields as _F
+            if isinstance(pk_field, (_F.AutoField, _F.BigAutoField, _F.SmallAutoField)):
+                pk_val = item.get(pk_attname)
+                if isinstance(pk_val, int):
+                    item[pk_attname] = str(pk_val)
 
             # Generate PK if missing
             if not item.get(pk_attname):

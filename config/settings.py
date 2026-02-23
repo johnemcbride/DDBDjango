@@ -25,9 +25,17 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.sites",
     "dynamo_backend.apps.DynamoBackendConfig",
     "demo_app.apps.DemoAppConfig",
+    # ── django-allauth ───────────────────────────────────────────────
+    "allauth",
+    "allauth.account",
+    "allauth.socialaccount",
+    "allauth.socialaccount.providers.amazon_cognito",
 ]
+
+SITE_ID = 1
 
 if DEBUG:
     INSTALLED_APPS += ["debug_toolbar"]
@@ -42,6 +50,8 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
+    # allauth account middleware (required for allauth 56+)
+    "allauth.account.middleware.AccountMiddleware",
 ]
 
 if DEBUG:
@@ -169,3 +179,50 @@ DEBUG_TOOLBAR_PANELS = [
     "debug_toolbar.panels.redirects.RedirectsPanel",
     "debug_toolbar.panels.profiling.ProfilingPanel",
 ]
+
+# ─────────────────────────────────────────────── authentication
+AUTHENTICATION_BACKENDS = [
+    # Standard Django auth (username/password, admin)
+    "django.contrib.auth.backends.ModelBackend",
+    # allauth social auth backend
+    "allauth.account.auth_backends.AuthenticationBackend",
+]
+
+# ───────────────────────── allauth core
+LOGIN_REDIRECT_URL = "/"
+ACCOUNT_LOGOUT_REDIRECT_URL = "/"
+# ACCOUNT_SIGNUP_FIELDS uses * suffix to mark required fields (allauth 65+)
+ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*", "password2*"]
+ACCOUNT_LOGIN_METHODS = {"email"}
+ACCOUNT_EMAIL_VERIFICATION = "none"      # no outgoing email in local dev
+ACCOUNT_SIGNUP_REDIRECT_URL = "/"
+SOCIALACCOUNT_AUTO_SIGNUP = True
+SOCIALACCOUNT_EMAIL_REQUIRED = False
+SOCIALACCOUNT_STORE_TOKENS = True
+# Auto-connect social login to an existing account with the same email
+# (prevents the "account already exists" signup prompt)
+SOCIALACCOUNT_EMAIL_AUTHENTICATION = True
+SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = True
+
+# ─────────────────────────────────── allauth Cognito → LocalStack
+# In local dev the Cognito mock runs inside Django itself at /cognito-mock/.
+# Set COGNITO_DOMAIN to your real Cognito User Pool domain in production
+# (or use LocalStack Pro for a proper local Cognito).
+SOCIALACCOUNT_PROVIDERS = {
+    "amazon_cognito": {
+        "DOMAIN": os.environ.get(
+            "COGNITO_DOMAIN",
+            "http://localhost:8000/cognito-mock",  # local mock (dev default)
+        ),
+    }
+}
+
+# ─────────────────────────────────────────── messages → Bootstrap classes
+from django.contrib.messages import constants as messages_constants
+MESSAGE_TAGS = {
+    messages_constants.DEBUG:   "secondary",
+    messages_constants.INFO:    "info",
+    messages_constants.SUCCESS: "success",
+    messages_constants.WARNING: "warning",
+    messages_constants.ERROR:   "danger",
+}

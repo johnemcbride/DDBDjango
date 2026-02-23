@@ -1,0 +1,187 @@
+{% extends "demo_app/base.html" %}
+{% block title %}DDBlog · Home{% endblock %}
+{% block nav_home %}active{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+
+  <!-- ── Main feed ── -->
+  <div class="col-lg-8">
+
+    <!-- Hero / filter header -->
+    {% if active_tag %}
+    <div class="feed-hero mb-3">
+      <h1><i class="bi bi-tag-fill me-2"></i>{{ active_tag.name }}</h1>
+      <p>Posts labelled with this tag · <a href="{% url 'home' %}" class="text-white-50">clear filter</a></p>
+    </div>
+    {% elif active_cat %}
+    <div class="feed-hero mb-3">
+      <h1><i class="bi bi-folder-fill me-2"></i>{{ active_cat.name }}</h1>
+      <p>{{ active_cat.description|default:"Posts in this category" }} · <a href="{% url 'home' %}" class="text-white-50">clear filter</a></p>
+    </div>
+    {% elif q %}
+    <div class="d-flex align-items-center mb-3 gap-2">
+      <h5 class="mb-0">Results for "<strong>{{ q }}</strong>"</h5>
+      <a href="{% url 'home' %}" class="btn btn-sm btn-outline-secondary">Clear</a>
+    </div>
+    {% else %}
+    <div class="feed-hero">
+      <h1>Recent Posts</h1>
+      <p>{{ total }} post{{ total|pluralize }} in the database</p>
+    </div>
+    {% endif %}
+
+    <!-- Post cards -->
+    {% if posts %}
+      {% for post in posts %}
+      <div class="card post-card shadow-sm mb-3">
+        <div class="card-body p-4">
+          <div class="d-flex justify-content-between align-items-start mb-1">
+            <div class="d-flex gap-2 flex-wrap">
+              {% for label in post.label_list %}
+              <a href="{% url 'tag-detail-fe' slug=label.slug %}" class="tag-pill"
+                 style="background:{{ label.colour }}22; color:{{ label.colour }}; border-color:{{ label.colour }}44">
+                {{ label.name }}
+              </a>
+              {% endfor %}
+              {% for cat in post.category_list %}
+              <a href="{% url 'category-detail-fe' slug=cat.slug %}" class="cat-badge">
+                <i class="bi bi-folder2 me-1"></i>{{ cat.name }}
+              </a>
+              {% endfor %}
+            </div>
+          </div>
+
+          <h5 class="card-title mb-1">
+            <a href="{% url 'post-detail' pk=post.pk %}">{{ post.title }}</a>
+          </h5>
+
+          <p class="post-meta mb-2">
+            {% if post.author_obj %}
+            <a href="{% url 'author-detail-fe' pk=post.author_id %}" class="text-decoration-none text-muted">
+              <i class="bi bi-person me-1"></i>{{ post.author_obj.username }}
+            </a>
+            ·
+            {% endif %}
+            <i class="bi bi-calendar3 me-1"></i>{{ post.created_at|date:"M j, Y" }}
+            · <i class="bi bi-eye me-1"></i>{{ post.view_count }} view{{ post.view_count|pluralize }}
+          </p>
+
+          {% if post.body %}
+          <p class="card-text text-muted" style="font-size:.93rem; overflow:hidden; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical;">
+            {{ post.body|truncatechars:220 }}
+          </p>
+          {% endif %}
+
+          <a href="{% url 'post-detail' pk=post.pk %}" class="btn btn-sm btn-outline-primary mt-1">
+            Read more <i class="bi bi-arrow-right"></i>
+          </a>
+        </div>
+      </div>
+      {% endfor %}
+
+      <!-- Pagination -->
+      <nav class="mt-2">
+        <ul class="pagination pagination-sm">
+          {% if has_prev %}
+          <li class="page-item">
+            <a class="page-link" href="?page={{ page|add:"-1" }}{% if active_tag %}&tag={{ active_tag.slug }}{% endif %}{% if active_cat %}&category={{ active_cat.slug }}{% endif %}{% if q %}&q={{ q }}{% endif %}">
+              <i class="bi bi-chevron-left"></i> Prev
+            </a>
+          </li>
+          {% endif %}
+          <li class="page-item disabled"><span class="page-link">Page {{ page }}</span></li>
+          {% if has_next %}
+          <li class="page-item">
+            <a class="page-link" href="?page={{ page|add:"1" }}{% if active_tag %}&tag={{ active_tag.slug }}{% endif %}{% if active_cat %}&category={{ active_cat.slug }}{% endif %}{% if q %}&q={{ q }}{% endif %}">
+              Next <i class="bi bi-chevron-right"></i>
+            </a>
+          </li>
+          {% endif %}
+        </ul>
+      </nav>
+
+    {% else %}
+    <div class="text-center py-5 text-muted">
+      <i class="bi bi-file-earmark-x" style="font-size:3rem"></i>
+      <p class="mt-3">No posts found.
+        {% if not active_tag and not active_cat and not q %}
+        <a href="{% url 'write-post' %}">Write the first one!</a>
+        {% endif %}
+      </p>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ── Sidebar ── -->
+  <div class="col-lg-4">
+
+    <!-- Write CTA -->
+    <div class="card border-0 shadow-sm mb-4" style="border-radius:12px; background: var(--accent-soft);">
+      <div class="card-body text-center py-4">
+        <i class="bi bi-pencil-square" style="font-size:1.8rem; color:var(--accent)"></i>
+        <p class="mt-2 mb-3 small">Share your thoughts with the world</p>
+        <a href="{% url 'write-post' %}" class="btn btn-sm w-100"
+           style="background:var(--accent);color:#fff;border-radius:8px">
+          Write a post
+        </a>
+      </div>
+    </div>
+
+    <!-- Tags -->
+    {% if all_tags %}
+    <div class="card border-0 shadow-sm mb-4" style="border-radius:12px">
+      <div class="card-body">
+        <div class="sidebar-section mb-0">
+          <h6><i class="bi bi-tags me-1"></i>Tags</h6>
+          <div class="d-flex flex-wrap gap-2">
+            {% for tag in all_tags %}
+            <a href="{% url 'tag-detail-fe' slug=tag.slug %}" class="tag-pill {% if active_tag and active_tag.pk == tag.pk %}fw-bold{% endif %}"
+               style="background:{{ tag.colour }}22; color:{{ tag.colour }}; border-color:{{ tag.colour }}66">
+              {{ tag.name }}
+            </a>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Categories -->
+    {% if all_cats %}
+    <div class="card border-0 shadow-sm mb-4" style="border-radius:12px">
+      <div class="card-body">
+        <div class="sidebar-section mb-0">
+          <h6><i class="bi bi-folder2 me-1"></i>Categories</h6>
+          <ul class="list-unstyled mb-0">
+            {% for cat in all_cats %}
+            <li class="mb-1">
+              <a href="{% url 'category-detail-fe' slug=cat.slug %}"
+                 class="text-decoration-none text-dark d-flex align-items-center gap-1 {% if active_cat and active_cat.pk == cat.pk %}fw-bold{% endif %}">
+                <i class="bi bi-folder2" style="font-size:.8rem; color:var(--accent)"></i>
+                {{ cat.name }}
+              </a>
+              {% if cat.child_list %}
+              <ul class="list-unstyled ms-3 mt-1 mb-1">
+                {% for child in cat.child_list %}
+                <li class="mb-1">
+                  <a href="{% url 'category-detail-fe' slug=child.slug %}"
+                     class="text-decoration-none text-muted d-flex align-items-center gap-1 {% if active_cat and active_cat.pk == child.pk %}fw-bold text-dark{% endif %}">
+                    <i class="bi bi-folder" style="font-size:.75rem; color:#aaa"></i>
+                    {{ child.name }}
+                  </a>
+                </li>
+                {% endfor %}
+              </ul>
+              {% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+  </div><!-- /sidebar -->
+</div>
+{% endblock %}

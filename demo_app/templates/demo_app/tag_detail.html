@@ -1,0 +1,82 @@
+{% extends "demo_app/base.html" %}
+{% block title %}#{{ tag.name }} · DDBlog{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+  <div class="col-lg-8">
+
+    <div class="feed-hero mb-4">
+      <div class="d-flex align-items-center gap-3">
+        <span class="tag-pill fs-5 px-3 py-1"
+              style="background:{{ tag.colour }}33; color:{{ tag.colour }}; border:2px solid {{ tag.colour }}66">
+          {{ tag.name }}
+        </span>
+        <div>
+          <h1 class="mb-0">{{ tag.name }}</h1>
+          <p class="mb-0 opacity-75">{{ posts|length }} post{{ posts|length|pluralize }}</p>
+        </div>
+      </div>
+    </div>
+
+    {% for post in posts %}
+    <div class="card post-card border-0 shadow-sm mb-3">
+      <div class="card-body p-4">
+        <div class="d-flex flex-wrap gap-2 mb-1">
+          {% for label in post.label_list %}
+          {% if label.pk != tag.pk %}
+          <a href="{% url 'tag-detail-fe' slug=label.slug %}" class="tag-pill"
+             style="background:{{ label.colour }}22; color:{{ label.colour }}; border-color:{{ label.colour }}44">
+            {{ label.name }}
+          </a>
+          {% endif %}
+          {% endfor %}
+        </div>
+        <h5 class="card-title mb-1">
+          <a href="{% url 'post-detail' pk=post.pk %}">{{ post.title }}</a>
+        </h5>
+        <p class="post-meta mb-2">
+          {% if post.author_obj %}
+          <a href="{% url 'author-detail-fe' pk=post.author_obj.pk %}" class="text-decoration-none text-muted">
+            <i class="bi bi-person me-1"></i>{{ post.author_obj.username }}
+          </a> ·
+          {% endif %}
+          <i class="bi bi-calendar3 me-1"></i>{{ post.created_at|date:"M j, Y" }}
+          · <i class="bi bi-eye me-1"></i>{{ post.view_count }} view{{ post.view_count|pluralize }}
+        </p>
+        {% if post.body %}
+        <p class="text-muted small mb-2">{{ post.body|truncatechars:180 }}</p>
+        {% endif %}
+        <a href="{% url 'post-detail' pk=post.pk %}" class="btn btn-sm btn-outline-primary">
+          Read more <i class="bi bi-arrow-right"></i>
+        </a>
+      </div>
+    </div>
+    {% empty %}
+    <p class="text-muted">No posts with this tag yet.</p>
+    {% endfor %}
+
+    <a href="{% url 'home' %}" class="btn btn-sm btn-outline-secondary mt-2">
+      <i class="bi bi-arrow-left me-1"></i> All posts
+    </a>
+  </div>
+
+  <!-- Sidebar: other tags -->
+  <div class="col-lg-4">
+    {% if all_tags %}
+    <div class="card border-0 shadow-sm" style="border-radius:12px">
+      <div class="card-body p-4">
+        <h6 class="text-muted text-uppercase small fw-bold mb-3">All Tags</h6>
+        <div class="d-flex flex-wrap gap-2">
+          {% for t in all_tags %}
+          <a href="{% url 'tag-detail-fe' slug=t.slug %}" class="tag-pill {% if t.pk == tag.pk %}fw-bold{% endif %}"
+             style="background:{{ t.colour }}22; color:{{ t.colour }}; border-color:{{ t.colour }}66">
+            {{ t.name }}
+          </a>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

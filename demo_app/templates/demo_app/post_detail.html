@@ -1,0 +1,220 @@
+{% extends "demo_app/base.html" %}
+{% block title %}{{ post.title }} · DDBlog{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+
+  <!-- ── Article ── -->
+  <div class="col-lg-8">
+
+    <!-- Tags + categories -->
+    <div class="d-flex flex-wrap gap-2 mb-2">
+      {% for label in post.label_list %}
+      <a href="{% url 'tag-detail-fe' slug=label.slug %}" class="tag-pill"
+         style="background:{{ label.colour }}22; color:{{ label.colour }}; border-color:{{ label.colour }}44">
+        {{ label.name }}
+      </a>
+      {% endfor %}
+      {% for cat in post.category_list %}
+      <a href="{% url 'category-detail-fe' slug=cat.slug %}" class="cat-badge">
+        <i class="bi bi-folder2 me-1"></i>{{ cat.name }}
+      </a>
+      {% endfor %}
+    </div>
+
+    <h1 class="fw-800 mb-2" style="font-weight:800">{{ post.title }}</h1>
+
+    <!-- Meta row -->
+    <div class="d-flex align-items-center gap-3 mb-4 flex-wrap">
+      {% if post.author_obj %}
+      <a href="{% url 'author-detail-fe' pk=post.author_id %}" class="d-flex align-items-center gap-2 text-decoration-none text-dark">
+        <div class="avatar" style="width:36px;height:36px;font-size:1rem">
+          {{ post.author_obj.username|first|upper }}
+        </div>
+        <strong>{{ post.author_obj.username }}</strong>
+      </a>
+      <span class="text-muted">·</span>
+      {% endif %}
+      <span class="text-muted small">
+        <i class="bi bi-calendar3 me-1"></i>{{ post.created_at|date:"F j, Y" }}
+      </span>
+      <span class="text-muted small">
+        <i class="bi bi-eye me-1"></i>{{ post.view_count }} view{{ post.view_count|pluralize }}
+      </span>
+      {% if post.published %}
+      <span class="badge bg-success-subtle text-success">Published</span>
+      {% else %}
+      <span class="badge bg-secondary-subtle text-secondary">Draft</span>
+      {% endif %}
+    </div>
+
+    <!-- Body -->
+    <div class="card border-0 shadow-sm mb-4" style="border-radius:14px">
+      <div class="card-body p-4 p-md-5">
+        <div class="post-body">
+          {% if post.body %}
+            {{ post.body|linebreaksbr }}
+          {% else %}
+            <p class="text-muted fst-italic">No content yet.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Revision history (collapsible) -->
+    {% if revisions %}
+    <div class="mb-4">
+      <button class="btn btn-sm btn-outline-secondary" type="button"
+              data-bs-toggle="collapse" data-bs-target="#revisions">
+        <i class="bi bi-clock-history me-1"></i> {{ revisions|length }} revision{{ revisions|length|pluralize }}
+      </button>
+      <div class="collapse mt-3" id="revisions">
+        <div class="card border-0 shadow-sm" style="border-radius:12px">
+          <div class="card-body p-4">
+            <h6 class="text-muted text-uppercase small fw-bold mb-3">Revision history</h6>
+            {% for rev in revisions %}
+            <div class="rev-item">
+              <div class="d-flex justify-content-between align-items-start">
+                <div>
+                  <span class="fw-semibold small">Rev {{ rev.revision_number }}</span>
+                  {% if rev.change_summary %}
+                  <span class="text-muted small ms-2">— {{ rev.change_summary }}</span>
+                  {% endif %}
+                  {% if rev.editor_obj %}
+                  <span class="text-muted small ms-2">by
+                    <a href="{% url 'author-detail-fe' pk=rev.editor_id %}">{{ rev.editor_obj.username }}</a>
+                  </span>
+                  {% else %}
+                  <span class="text-muted small ms-2"><em>anonymous</em></span>
+                  {% endif %}
+                </div>
+                <span class="text-muted small">{{ rev.created_at|date:"M j, Y" }}</span>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Related posts -->
+    {% if related %}
+    <div class="mb-4">
+      <h6 class="text-muted text-uppercase small fw-bold mb-3">Related posts</h6>
+      <div class="row g-3">
+        {% for rp in related %}
+        <div class="col-sm-6">
+          <div class="card post-card border-0 shadow-sm h-100">
+            <div class="card-body p-3">
+              <a href="{% url 'post-detail' pk=rp.pk %}" class="d-block fw-semibold text-dark text-decoration-none mb-1">
+                {{ rp.title }}
+              </a>
+              <span class="text-muted post-meta">{{ rp.created_at|date:"M j, Y" }}</span>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Comments -->
+    <div id="comments">
+      <h5 class="fw-bold mb-3">
+        <i class="bi bi-chat-dots me-2"></i>
+        {{ comments|length }} Comment{{ comments|length|pluralize }}
+      </h5>
+
+      {% for comment in comments %}
+      <div class="comment-card">
+        <div class="d-flex justify-content-between mb-1">
+          <span class="c-name">{{ comment.author_name|default:"Anonymous" }}</span>
+          <span class="c-date">{{ comment.created_at|date:"M j, Y · g:i a" }}</span>
+        </div>
+        <p class="mb-0" style="font-size:.93rem">{{ comment.body|linebreaksbr }}</p>
+      </div>
+      {% empty %}
+      <p class="text-muted small">No comments yet — be the first!</p>
+      {% endfor %}
+
+      <!-- Add comment form -->
+      <div class="card border-0 shadow-sm mt-4" style="border-radius:12px">
+        <div class="card-body p-4">
+          <h6 class="fw-bold mb-3">Leave a comment</h6>
+          <form method="post" action="{% url 'add-comment' pk=post.pk %}">
+            {% csrf_token %}
+            <div class="mb-3">
+              <label class="form-label small fw-semibold">Name <span class="text-muted fw-normal">(optional)</span></label>
+              <input type="text" name="author_name" class="form-control" placeholder="Your name"/>
+            </div>
+            <div class="mb-3">
+              <label class="form-label small fw-semibold">Comment <span class="text-danger">*</span></label>
+              <textarea name="body" class="form-control" rows="4" placeholder="What do you think?"></textarea>
+            </div>
+            <button class="btn btn-primary" type="submit" style="background:var(--accent);border:none">
+              <i class="bi bi-send me-1"></i> Post comment
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Sidebar ── -->
+  <div class="col-lg-4">
+    {% if post.author_obj %}
+    <div class="card border-0 shadow-sm mb-4" style="border-radius:12px">
+      <div class="card-body p-4 text-center">
+        <div class="avatar avatar-lg mx-auto mb-3">{{ post.author_obj.username|first|upper }}</div>
+        <h6 class="fw-bold mb-0">{{ post.author_obj.username }}</h6>
+        {% if post.author_obj.bio %}
+        <p class="text-muted small mt-1 mb-2">{{ post.author_obj.bio|truncatechars:100 }}</p>
+        {% endif %}
+        <a href="{% url 'author-detail-fe' pk=post.author_obj.pk %}"
+           class="btn btn-sm btn-outline-primary w-100 mt-1">View profile</a>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if post.label_list %}
+    <div class="card border-0 shadow-sm mb-4" style="border-radius:12px">
+      <div class="card-body p-4">
+        <h6 class="text-muted text-uppercase small fw-bold mb-2">Tags</h6>
+        <div class="d-flex flex-wrap gap-2">
+          {% for label in post.label_list %}
+          <a href="{% url 'tag-detail-fe' slug=label.slug %}" class="tag-pill"
+             style="background:{{ label.colour }}22; color:{{ label.colour }}; border-color:{{ label.colour }}44">
+            {{ label.name }}
+          </a>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if post.category_list %}
+    <div class="card border-0 shadow-sm mb-4" style="border-radius:12px">
+      <div class="card-body p-4">
+        <h6 class="text-muted text-uppercase small fw-bold mb-2">Categories</h6>
+        {% for cat in post.category_list %}
+        <a href="{% url 'category-detail-fe' slug=cat.slug %}" class="cat-badge d-inline-block mb-1">
+          <i class="bi bi-folder2 me-1"></i>{{ cat.name }}
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="card border-0 shadow-sm" style="border-radius:12px; background:var(--accent-soft)">
+      <div class="card-body p-4 text-center">
+        <i class="bi bi-pencil-square" style="font-size:1.6rem; color:var(--accent)"></i>
+        <p class="mt-2 mb-3 small">Have something to say?</p>
+        <a href="{% url 'write-post' %}" class="btn btn-sm w-100"
+           style="background:var(--accent);color:#fff;border-radius:8px">Write a post</a>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

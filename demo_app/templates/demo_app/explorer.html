@@ -1,0 +1,573 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>DDB Django Explorer</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"/>
+  <style>
+    body { background: #f8f9fa; }
+    .tab-content { padding: 1.5rem 0; }
+    pre { max-height: 260px; overflow-y: auto; background:#1e2030; color:#cdd6f4; border-radius:6px; padding:1rem; font-size:.78rem; }
+    .card { margin-bottom: 1rem; }
+    .badge-tag { background:#6ea8fe; color:#000; }
+    .badge-cat { background:#a3cfbb; color:#000; }
+    .badge-rev { background:#ffc; color:#333; }
+    h5.section { border-bottom:2px solid #dee2e6; padding-bottom:.4rem; margin:1.2rem 0 .8rem; }
+  </style>
+</head>
+<body>
+<div class="container-fluid py-3">
+  <h2 class="mb-0">DDB Django Explorer</h2>
+  <p class="text-muted small mb-3">Vanilla-JS frontend — talks directly to <code>/api/</code></p>
+
+  <ul class="nav nav-tabs" id="mainTabs">
+    <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-authors">Authors</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-tags">Tags</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-categories">Categories</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-posts">Posts</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-relations">Relationships</button></li>
+  </ul>
+
+  <div class="tab-content" id="mainTabContent">
+
+    <!-- ══════════════════════════════════════════════ AUTHORS TAB -->
+    <div class="tab-pane fade show active" id="tab-authors">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <div class="card">
+            <div class="card-header fw-semibold">Create Author</div>
+            <div class="card-body">
+              <input id="a-username" class="form-control mb-2" placeholder="Username (required)"/>
+              <input id="a-email" class="form-control mb-2" placeholder="Email"/>
+              <textarea id="a-bio" class="form-control mb-2" rows="2" placeholder="Bio"></textarea>
+              <button class="btn btn-primary w-100" onclick="createAuthor()">Create Author</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header fw-semibold">Edit / View Profile</div>
+            <div class="card-body">
+              <input id="prof-author-id" class="form-control mb-2" placeholder="Author PK"/>
+              <input id="prof-website" class="form-control mb-2" placeholder="Website URL"/>
+              <input id="prof-twitter" class="form-control mb-2" placeholder="@twitter"/>
+              <input id="prof-location" class="form-control mb-2" placeholder="Location"/>
+              <input id="prof-followers" class="form-control mb-2" placeholder="Follower count (number)"/>
+              <button class="btn btn-secondary w-100 mb-1" onclick="getProfile()">Load Profile</button>
+              <button class="btn btn-success w-100" onclick="upsertProfile()">Save / Create Profile</button>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-8">
+          <div class="d-flex justify-content-between align-items-center">
+            <h5 class="section">Authors</h5>
+            <button class="btn btn-sm btn-outline-secondary" onclick="loadAuthors()">Refresh</button>
+          </div>
+          <div id="authors-list"></div>
+          <h5 class="section">Response</h5>
+          <pre id="authors-log">{}</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════ TAGS TAB -->
+    <div class="tab-pane fade" id="tab-tags">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <div class="card">
+            <div class="card-header fw-semibold">Create Tag</div>
+            <div class="card-body">
+              <input id="tag-name" class="form-control mb-2" placeholder="Name (required)"/>
+              <input id="tag-slug" class="form-control mb-2" placeholder="Slug (auto if blank)"/>
+              <input id="tag-colour" class="form-control mb-2" placeholder="Colour hex e.g. #ff5733" value="#6ea8fe"/>
+              <button class="btn btn-primary w-100" onclick="createTag()">Create Tag</button>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-8">
+          <div class="d-flex justify-content-between align-items-center">
+            <h5 class="section">Tags</h5>
+            <button class="btn btn-sm btn-outline-secondary" onclick="loadTags()">Refresh</button>
+          </div>
+          <div id="tags-list"></div>
+          <h5 class="section">Response</h5>
+          <pre id="tags-log">{}</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════ CATEGORIES TAB -->
+    <div class="tab-pane fade" id="tab-categories">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <div class="card">
+            <div class="card-header fw-semibold">Create Category</div>
+            <div class="card-body">
+              <input id="cat-name" class="form-control mb-2" placeholder="Name (required)"/>
+              <input id="cat-slug" class="form-control mb-2" placeholder="Slug (auto if blank)"/>
+              <textarea id="cat-desc" class="form-control mb-2" rows="2" placeholder="Description"></textarea>
+              <label class="form-label small text-muted">Parent category (optional)</label>
+              <select id="cat-parent" class="form-select mb-2"><option value="">— none —</option></select>
+              <button class="btn btn-primary w-100" onclick="createCategory()">Create Category</button>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-8">
+          <div class="d-flex justify-content-between align-items-center">
+            <h5 class="section">Categories</h5>
+            <button class="btn btn-sm btn-outline-secondary" onclick="loadCategories()">Refresh</button>
+          </div>
+          <div id="cats-list"></div>
+          <h5 class="section">Response</h5>
+          <pre id="cats-log">{}</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════ POSTS TAB -->
+    <div class="tab-pane fade" id="tab-posts">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <div class="card">
+            <div class="card-header fw-semibold">Create Post</div>
+            <div class="card-body">
+              <input id="p-title" class="form-control mb-2" placeholder="Title (required)"/>
+              <input id="p-slug" class="form-control mb-2" placeholder="Slug (auto if blank)"/>
+              <input id="p-author-id" class="form-control mb-2" placeholder="Author PK (required)"/>
+              <textarea id="p-body" class="form-control mb-2" rows="3" placeholder="Body"></textarea>
+              <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="p-public" checked/>
+                <label class="form-check-label" for="p-public">Public</label>
+              </div>
+              <button class="btn btn-primary w-100" onclick="createPost()">Create Post</button>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-8">
+          <div class="d-flex justify-content-between align-items-center">
+            <h5 class="section">Posts</h5>
+            <button class="btn btn-sm btn-outline-secondary" onclick="loadPosts()">Refresh</button>
+          </div>
+          <div id="posts-list"></div>
+          <h5 class="section">Response</h5>
+          <pre id="posts-log">{}</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════ RELATIONSHIPS TAB -->
+    <div class="tab-pane fade" id="tab-relations">
+      <div class="row g-3">
+
+        <!-- Labels M2M -->
+        <div class="col-md-4">
+          <div class="card">
+            <div class="card-header fw-semibold">Labels (Post ↔ Tag, auto M2M)</div>
+            <div class="card-body">
+              <input id="lbl-post-id" class="form-control mb-2" placeholder="Post PK"/>
+              <select id="lbl-tag-select" class="form-select mb-2"><option value="">— pick tag —</option></select>
+              <button class="btn btn-success w-100 mb-1" onclick="addLabel()">Add Label</button>
+              <button class="btn btn-outline-secondary w-100 mb-1" onclick="getLabels()">List Labels</button>
+              <hr/>
+              <label class="form-label small text-muted">Remove a specific tag</label>
+              <input id="lbl-tag-id" class="form-control mb-2" placeholder="Tag PK to remove"/>
+              <button class="btn btn-danger w-100" onclick="removeLabel()">Remove Label</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- PostCategory explicit -->
+        <div class="col-md-4">
+          <div class="card">
+            <div class="card-header fw-semibold">Categories (Post ↔ Category, explicit)</div>
+            <div class="card-body">
+              <input id="pc-post-id" class="form-control mb-2" placeholder="Post PK"/>
+              <select id="pc-cat-select" class="form-select mb-2"><option value="">— pick category —</option></select>
+              <input id="pc-order" class="form-control mb-2" placeholder="Order (number, default 0)" value="0"/>
+              <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="pc-pinned"/>
+                <label class="form-check-label" for="pc-pinned">Pinned</label>
+              </div>
+              <button class="btn btn-success w-100 mb-1" onclick="addPostCategory()">Assign Category</button>
+              <button class="btn btn-outline-secondary w-100 mb-1" onclick="getPostCategories()">List</button>
+              <hr/>
+              <label class="form-label small text-muted">Delete PostCategory by PK</label>
+              <input id="pc-pk" class="form-control mb-2" placeholder="PostCategory PK"/>
+              <button class="btn btn-danger w-100" onclick="deletePostCategory()">Delete</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Revisions -->
+        <div class="col-md-4">
+          <div class="card">
+            <div class="card-header fw-semibold">Revisions (Post → nullable Author)</div>
+            <div class="card-body">
+              <input id="rev-post-id" class="form-control mb-2" placeholder="Post PK"/>
+              <select id="rev-editor-select" class="form-select mb-2"><option value="">— no editor (null FK) —</option></select>
+              <textarea id="rev-body" class="form-control mb-2" rows="3" placeholder="Body snapshot (blank = copy post body)"></textarea>
+              <input id="rev-summary" class="form-control mb-2" placeholder="Change summary"/>
+              <button class="btn btn-success w-100 mb-1" onclick="addRevision()">Add Revision</button>
+              <button class="btn btn-outline-secondary w-100" onclick="getRevisions()">List Revisions</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-12">
+          <h5 class="section">Response</h5>
+          <pre id="rel-log">{}</pre>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- tab-content -->
+</div><!-- container -->
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// ── helpers ──────────────────────────────────────────────────────
+const API = '/api';
+
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(API + path, opts);
+  let data;
+  try { data = await res.json(); } catch { data = {}; }
+  return { status: res.status, data };
+}
+
+function log(elId, obj) {
+  document.getElementById(elId).textContent = JSON.stringify(obj, null, 2);
+}
+
+function slug(name) {
+  return name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+}
+
+// Keep local caches for dropdowns
+let _authors = [], _tags = [], _categories = [], _posts = [];
+
+// ── AUTHORS ───────────────────────────────────────────────────────
+async function loadAuthors() {
+  const { data } = await api('GET', '/authors/');
+  log('authors-log', data);
+  _authors = data.authors || [];
+  renderAuthors();
+  refreshDropdowns();
+}
+
+function renderAuthors() {
+  const el = document.getElementById('authors-list');
+  if (!_authors.length) { el.innerHTML = '<p class="text-muted">No authors yet.</p>'; return; }
+  el.innerHTML = _authors.map(a => `
+    <div class="card card-body py-2 px-3 small d-flex flex-row align-items-center justify-content-between">
+      <div>
+        <strong>${esc(a.username)}</strong>
+        <span class="text-muted ms-2">${esc(a.email || '')}</span><br/>
+        <code class="small">${esc(a.pk)}</code>
+      </div>
+      <button class="btn btn-sm btn-outline-danger" onclick="deleteAuthor('${esc(a.pk)}')">Delete</button>
+    </div>`).join('');
+}
+
+async function createAuthor() {
+  const username = document.getElementById('a-username').value.trim();
+  if (!username) { alert('Username required'); return; }
+  const body = {
+    username,
+    email: document.getElementById('a-email').value.trim() || undefined,
+    bio: document.getElementById('a-bio').value.trim() || undefined,
+  };
+  const { data, status } = await api('POST', '/authors/', body);
+  log('authors-log', { status, ...data });
+  if (status === 201) loadAuthors();
+}
+
+async function deleteAuthor(pk) {
+  if (!confirm('Delete author ' + pk + '?')) return;
+  const { data, status } = await api('DELETE', `/authors/${pk}/`);
+  log('authors-log', { status, ...data });
+  loadAuthors();
+}
+
+async function getProfile() {
+  const pk = document.getElementById('prof-author-id').value.trim();
+  if (!pk) { alert('Author PK required'); return; }
+  const { data, status } = await api('GET', `/authors/${pk}/profile/`);
+  log('authors-log', { status, ...data });
+  if (data.website) document.getElementById('prof-website').value = data.website || '';
+  if (data.twitter) document.getElementById('prof-twitter').value = data.twitter || '';
+  if (data.location) document.getElementById('prof-location').value = data.location || '';
+  if (data.follower_count !== undefined) document.getElementById('prof-followers').value = data.follower_count;
+}
+
+async function upsertProfile() {
+  const pk = document.getElementById('prof-author-id').value.trim();
+  if (!pk) { alert('Author PK required'); return; }
+  const followers = document.getElementById('prof-followers').value;
+  const body = {
+    website: document.getElementById('prof-website').value.trim() || undefined,
+    twitter: document.getElementById('prof-twitter').value.trim() || undefined,
+    location: document.getElementById('prof-location').value.trim() || undefined,
+    follower_count: followers ? parseInt(followers, 10) : undefined,
+  };
+  const { data, status } = await api('POST', `/authors/${pk}/profile/`, body);
+  log('authors-log', { status, ...data });
+}
+
+// ── TAGS ──────────────────────────────────────────────────────────
+async function loadTags() {
+  const { data } = await api('GET', '/tags/');
+  log('tags-log', data);
+  _tags = data.tags || [];
+  renderTags();
+  refreshDropdowns();
+}
+
+function renderTags() {
+  const el = document.getElementById('tags-list');
+  if (!_tags.length) { el.innerHTML = '<p class="text-muted">No tags yet.</p>'; return; }
+  el.innerHTML = _tags.map(t => `
+    <div class="card card-body py-2 px-3 small d-flex flex-row align-items-center justify-content-between">
+      <div>
+        <span class="badge badge-tag me-2" style="background:${esc(t.colour||'#ccc')};color:#000">${esc(t.name)}</span>
+        <span class="text-muted">${esc(t.slug)}</span><br/>
+        <code class="small">${esc(t.pk)}</code>
+      </div>
+      <button class="btn btn-sm btn-outline-danger" onclick="deleteTag('${esc(t.pk)}')">Delete</button>
+    </div>`).join('');
+}
+
+async function createTag() {
+  const name = document.getElementById('tag-name').value.trim();
+  if (!name) { alert('Name required'); return; }
+  const body = {
+    name,
+    slug: document.getElementById('tag-slug').value.trim() || slug(name),
+    colour: document.getElementById('tag-colour').value.trim() || '#cccccc',
+  };
+  const { data, status } = await api('POST', '/tags/', body);
+  log('tags-log', { status, ...data });
+  if (status === 201) loadTags();
+}
+
+async function deleteTag(pk) {
+  if (!confirm('Delete tag?')) return;
+  const { data, status } = await api('DELETE', `/tags/${pk}/`);
+  log('tags-log', { status });
+  loadTags();
+}
+
+// ── CATEGORIES ────────────────────────────────────────────────────
+async function loadCategories() {
+  const { data } = await api('GET', '/categories/');
+  log('cats-log', data);
+  _categories = data.categories || [];
+  renderCategories();
+  refreshDropdowns();
+}
+
+function renderCategories() {
+  const el = document.getElementById('cats-list');
+  if (!_categories.length) { el.innerHTML = '<p class="text-muted">No categories yet.</p>'; return; }
+  el.innerHTML = _categories.map(c => `
+    <div class="card card-body py-2 px-3 small d-flex flex-row align-items-center justify-content-between">
+      <div>
+        <strong>${esc(c.name)}</strong>
+        ${c.parent_id ? `<span class="text-muted ms-2">↳ parent: <code>${esc(c.parent_id)}</code></span>` : ''}
+        <br/><code class="small">${esc(c.pk)}</code>
+      </div>
+      <button class="btn btn-sm btn-outline-danger" onclick="deleteCategory('${esc(c.pk)}')">Delete</button>
+    </div>`).join('');
+}
+
+async function createCategory() {
+  const name = document.getElementById('cat-name').value.trim();
+  if (!name) { alert('Name required'); return; }
+  const body = {
+    name,
+    slug: document.getElementById('cat-slug').value.trim() || slug(name),
+    description: document.getElementById('cat-desc').value.trim() || undefined,
+    parent_id: document.getElementById('cat-parent').value || undefined,
+  };
+  const { data, status } = await api('POST', '/categories/', body);
+  log('cats-log', { status, ...data });
+  if (status === 201) loadCategories();
+}
+
+async function deleteCategory(pk) {
+  if (!confirm('Delete category?')) return;
+  const { status } = await api('DELETE', `/categories/${pk}/`);
+  log('cats-log', { status });
+  loadCategories();
+}
+
+// ── POSTS ─────────────────────────────────────────────────────────
+async function loadPosts() {
+  const { data } = await api('GET', '/posts/');
+  log('posts-log', data);
+  _posts = data.posts || [];
+  renderPosts();
+  refreshDropdowns();
+}
+
+function renderPosts() {
+  const el = document.getElementById('posts-list');
+  if (!_posts.length) { el.innerHTML = '<p class="text-muted">No posts yet.</p>'; return; }
+  el.innerHTML = _posts.map(p => `
+    <div class="card card-body py-2 px-3 small d-flex flex-row align-items-center justify-content-between">
+      <div>
+        <strong>${esc(p.title)}</strong>
+        <span class="text-muted ms-2">author: <code>${esc(p.author_id)}</code></span><br/>
+        <code class="small">${esc(p.pk)}</code>
+      </div>
+      <button class="btn btn-sm btn-outline-danger" onclick="deletePost('${esc(p.pk)}')">Delete</button>
+    </div>`).join('');
+}
+
+async function createPost() {
+  const title = document.getElementById('p-title').value.trim();
+  const author_id = document.getElementById('p-author-id').value.trim();
+  if (!title || !author_id) { alert('Title and Author PK required'); return; }
+  const body = {
+    title,
+    slug: document.getElementById('p-slug').value.trim() || slug(title),
+    author_id,
+    body: document.getElementById('p-body').value.trim() || '',
+    public: document.getElementById('p-public').checked,
+  };
+  const { data, status } = await api('POST', '/posts/', body);
+  log('posts-log', { status, ...data });
+  if (status === 201) loadPosts();
+}
+
+async function deletePost(pk) {
+  if (!confirm('Delete post?')) return;
+  const { status } = await api('DELETE', `/posts/${pk}/`);
+  log('posts-log', { status });
+  loadPosts();
+}
+
+// ── RELATIONSHIPS ─────────────────────────────────────────────────
+
+// Labels
+async function getLabels() {
+  const pk = document.getElementById('lbl-post-id').value.trim();
+  if (!pk) { alert('Post PK required'); return; }
+  const { data, status } = await api('GET', `/posts/${pk}/labels/`);
+  log('rel-log', { status, ...data });
+}
+
+async function addLabel() {
+  const pk = document.getElementById('lbl-post-id').value.trim();
+  const tag_id = document.getElementById('lbl-tag-select').value;
+  if (!pk || !tag_id) { alert('Post PK and tag required'); return; }
+  const { data, status } = await api('POST', `/posts/${pk}/labels/`, { tag_id });
+  log('rel-log', { status, ...data });
+}
+
+async function removeLabel() {
+  const pk = document.getElementById('lbl-post-id').value.trim();
+  const tag_pk = document.getElementById('lbl-tag-id').value.trim();
+  if (!pk || !tag_pk) { alert('Post PK and Tag PK required'); return; }
+  const { data, status } = await api('DELETE', `/posts/${pk}/labels/${tag_pk}/`);
+  log('rel-log', { status, ...data });
+}
+
+// PostCategories
+async function getPostCategories() {
+  const pk = document.getElementById('pc-post-id').value.trim();
+  if (!pk) { alert('Post PK required'); return; }
+  const { data, status } = await api('GET', `/posts/${pk}/categories/`);
+  log('rel-log', { status, ...data });
+}
+
+async function addPostCategory() {
+  const pk = document.getElementById('pc-post-id').value.trim();
+  const category_id = document.getElementById('pc-cat-select').value;
+  if (!pk || !category_id) { alert('Post PK and category required'); return; }
+  const body = {
+    category_id,
+    order: parseInt(document.getElementById('pc-order').value || '0', 10),
+    pinned: document.getElementById('pc-pinned').checked,
+  };
+  const { data, status } = await api('POST', `/posts/${pk}/categories/`, body);
+  log('rel-log', { status, ...data });
+}
+
+async function deletePostCategory() {
+  const pk = document.getElementById('pc-pk').value.trim();
+  if (!pk) { alert('PostCategory PK required'); return; }
+  const { status } = await api('DELETE', `/postcategories/${pk}/`);
+  log('rel-log', { status });
+}
+
+// Revisions
+async function getRevisions() {
+  const pk = document.getElementById('rev-post-id').value.trim();
+  if (!pk) { alert('Post PK required'); return; }
+  const { data, status } = await api('GET', `/posts/${pk}/revisions/`);
+  log('rel-log', { status, ...data });
+}
+
+async function addRevision() {
+  const pk = document.getElementById('rev-post-id').value.trim();
+  if (!pk) { alert('Post PK required'); return; }
+  const editor_id = document.getElementById('rev-editor-select').value || null;
+  const body = {
+    editor_id,
+    body_snapshot: document.getElementById('rev-body').value.trim() || undefined,
+    change_summary: document.getElementById('rev-summary').value.trim() || undefined,
+  };
+  const { data, status } = await api('POST', `/posts/${pk}/revisions/`, body);
+  log('rel-log', { status, ...data });
+}
+
+// ── DROPDOWN SYNC ─────────────────────────────────────────────────
+function refreshDropdowns() {
+  // Tags → Labels select
+  fillSelect('lbl-tag-select', _tags, t => ({ value: t.pk, label: t.name }), '— pick tag —');
+  // Categories → PostCategory select + Category parent
+  fillSelect('pc-cat-select', _categories, c => ({ value: c.pk, label: c.name }), '— pick category —');
+  fillSelect('cat-parent', _categories, c => ({ value: c.pk, label: c.name }), '— none —');
+  // Authors → revision editor select
+  fillSelect('rev-editor-select', _authors, a => ({ value: a.pk, label: a.username }), '— no editor (null FK) —');
+}
+
+function fillSelect(id, items, mapper, placeholder) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const cur = el.value;
+  el.innerHTML = `<option value="">${placeholder}</option>` +
+    items.map(i => { const m = mapper(i); return `<option value="${esc(m.value)}">${esc(m.label)}</option>`; }).join('');
+  el.value = cur;
+}
+
+function esc(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── BOOT ──────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  // Pre-load all lists on startup
+  Promise.all([loadAuthors(), loadTags(), loadCategories(), loadPosts()]);
+
+  // Reload the relevant list when switching tabs
+  const tabMap = {
+    'tab-authors': loadAuthors,
+    'tab-tags': loadTags,
+    'tab-categories': loadCategories,
+    'tab-posts': loadPosts,
+    'tab-relations': refreshDropdowns,
+  };
+  document.querySelectorAll('#mainTabs button[data-bs-toggle="tab"]').forEach(btn => {
+    btn.addEventListener('shown.bs.tab', e => {
+      const target = e.target.getAttribute('data-bs-target').replace('#','');
+      if (tabMap[target]) tabMap[target]();
+    });
+  });
+});
+</script>
+</body>
+</html>
