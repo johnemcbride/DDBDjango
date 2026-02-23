@@ -50,6 +50,26 @@ services:
       - "8080:8080"
     restart: unless-stopped
 
+  # ── cloudfront-proxy ───────────────────────────────────────────────────────
+  # nginx reverse proxy mimicking a CloudFront distribution:
+  #   /api/*  →  Lambda API Gateway (LocalStack)
+  #   /*      →  S3 static bucket   (LocalStack)
+  # Open http://localhost:3000 to view the React frontend.
+  # NGINX_API_ID is written to .env by scripts/deploy_frontend.sh.
+  cloudfront-proxy:
+    image: nginx:alpine
+    container_name: ddbdjango-cloudfront
+    ports:
+      - "3000:80"
+    environment:
+      - NGINX_API_ID=${NGINX_API_ID:-placeholder}
+    volumes:
+      - ./docker/cloudfront-proxy.conf.template:/etc/nginx/templates/default.conf.template:ro
+    depends_on:
+      localstack:
+        condition: service_healthy
+    restart: unless-stopped
+
   # ── dynamodb-admin ─────────────────────────────────────────────────────────
   # Web UI for browsing and editing DynamoDB tables.
   # Open http://localhost:8001

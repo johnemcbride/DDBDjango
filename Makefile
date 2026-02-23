@@ -1,4 +1,4 @@
-.PHONY: help install install-py312 test test-verbose clean dev migrate seed docker-up docker-down lambda-deploy lambda-redeploy lambda-url
+.PHONY: help install install-py312 test test-verbose clean dev migrate seed docker-up docker-down lambda-deploy lambda-redeploy lambda-url frontend-install frontend-dev frontend-build frontend-deploy frontend-redeploy frontend-url
 
 # Allow specifying Python version (default: python3)
 PYTHON ?= python3
@@ -18,6 +18,12 @@ help:
 	@echo "make lambda-deploy    - Build and deploy app to LocalStack Lambda"
 	@echo "make lambda-redeploy  - Fast re-deploy (code only, skip pip install)"
 	@echo "make lambda-url       - Print the Lambda API Gateway URL"
+	@echo "make frontend-install - Install frontend npm dependencies"
+	@echo "make frontend-dev     - Start Vite dev server (proxies to Django)"
+	@echo "make frontend-build   - Build React app only (uses current .env)"
+	@echo "make frontend-deploy  - Build + deploy React to S3 + restart proxy"
+	@echo "make frontend-redeploy- Re-deploy without npm install/build"
+	@echo "make frontend-url     - Print the CloudFront proxy URL"
 	@echo "make clean            - Remove venv and cache files"
 	@echo ""
 	@echo "Advanced:"
@@ -72,6 +78,23 @@ lambda-url:
 	@API_ID=$$(aws --endpoint-url=http://localhost:4566 --region=us-east-1 --no-cli-pager --output text \
 		apigateway get-rest-apis --query "items[?name=='ddbdjango'].id" 2>/dev/null | head -1); \
 	echo "http://$${API_ID}.execute-api.localhost.localstack.cloud:4566/api/"
+
+frontend-install:
+	cd frontend && npm install
+
+frontend-dev:
+	cd frontend && npm run dev
+
+frontend-deploy:
+	chmod +x scripts/deploy_frontend.sh
+	./scripts/deploy_frontend.sh
+
+frontend-redeploy:
+	chmod +x scripts/deploy_frontend.sh
+	./scripts/deploy_frontend.sh --skip-build
+
+frontend-url:
+	@echo "http://localhost:3000"
 
 clean:
 	rm -rf .venv

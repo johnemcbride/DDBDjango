@@ -1,0 +1,79 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# docker/cloudfront-proxy.conf.template
+# Nginx "CloudFront" proxy — served at http://localhost:3000
+#
+# Mimics a CloudFront distribution with two behaviors:
+#   /api/*  →  Lambda API Gateway (LocalStack)   [origin: API GW]
+#   /*      →  S3 static bucket  (LocalStack)    [origin: S3]
+#
+# NGINX_API_ID is substituted at container start via envsubst (built into the
+# official nginx Docker image when configs are placed in /etc/nginx/templates/).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Upstream: LocalStack (single host for all AWS services)
+upstream localstack {
+    server localstack:4566;
+    keepalive 16;
+}
+
+server {
+    listen 80;
+    server_name _;
+
+    # ── CloudFront-like headers ──────────────────────────────────────────────
+    add_header X-Cache                "Hit from cloudfront" always;
+    add_header X-Amz-Cf-Id           "LocalStack-CF-Proxy" always;
+    add_header Via                    "1.1 cloudfront (CloudFront)" always;
+    add_header X-Amz-Cf-Pop          "LocalStack-SIM" always;
+    add_header Vary                   "Accept-Encoding" always;
+
+    # ── Behavior 1: /api/* → Lambda API Gateway ──────────────────────────────
+    # The API Gateway stage is named "api". When LocalStack routes the request it
+    # strips the stage prefix and passes only the remainder to the Lambda, so
+    # GET /api/posts/ → Lambda path = /posts/.
+    # But Django's URL config expects the full /api/posts/ path, so we add the
+    # stage prefix again: /api/posts/ → /api/api/posts/ → stage stripped → /api/posts/
+    location /api/ {
+        rewrite ^/api/(.*)$ /api/api/$1 break;
+        proxy_pass         http://localstack;
+        proxy_http_version 1.1;
+        proxy_set_header   Connection        "";
+
+        # Tell LocalStack which API Gateway to route to
+        proxy_set_header   Host              "${NGINX_API_ID}.execute-api.localhost.localstack.cloud:4566";
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_set_header   X-Real-IP         $remote_addr;
+
+        proxy_read_timeout    30s;
+        proxy_connect_timeout 10s;
+
+        # Mark as MISS (dynamic API, not cached)
+        add_header X-Cache "Miss from cloudfront" always;
+    }
+
+    # ── Behavior 2a: /assets/* → S3 hashed static files ─────────────────────
+    location /assets/ {
+        proxy_pass         http://localstack/ddbdjango-frontend/assets/;
+        proxy_http_version 1.1;
+        proxy_set_header   Connection     "";
+        proxy_set_header   Host           "localstack:4566";
+        proxy_set_header   Authorization  "";
+        add_header         Cache-Control  "public, max-age=31536000, immutable" always;
+    }
+
+    # ── Behavior 2b: /* → S3 index.html (SPA — React Router handles routing) ─
+    # All non-asset requests serve index.html; the React app handles client-side
+    # routing. This mirrors CloudFront's "Default Root Object" + custom error pages.
+    location / {
+        # Rewrite every path to /ddbdjango-frontend/index.html then proxy.
+        # Using rewrite+break lets proxy_pass work without a URI component.
+        rewrite ^ /ddbdjango-frontend/index.html break;
+        proxy_pass         http://localstack;
+        proxy_http_version 1.1;
+        proxy_set_header   Connection    "";
+        proxy_set_header   Host          "localstack:4566";
+        proxy_set_header   Authorization "";
+        add_header         Cache-Control "no-cache, no-store, must-revalidate" always;
+    }
+}
