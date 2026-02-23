@@ -38,9 +38,12 @@ def _get_django_config() -> Dict[str, Any]:
 
 def get_config() -> Dict[str, Any]:
     cfg = _get_django_config()
-    # Env vars take priority over Django settings so tests can override easily.
+    # Priority: DYNAMO_ENDPOINT_URL > AWS_ENDPOINT_URL (auto-set by LocalStack
+    # in Lambda environments) > Django settings > None (real AWS).
     if "DYNAMO_ENDPOINT_URL" in os.environ:
         endpoint = os.environ["DYNAMO_ENDPOINT_URL"] or None   # empty str → None
+    elif "AWS_ENDPOINT_URL" in os.environ:
+        endpoint = os.environ["AWS_ENDPOINT_URL"] or None
     else:
         endpoint = cfg.get("ENDPOINT_URL") or None
     return {

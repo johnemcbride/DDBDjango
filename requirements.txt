@@ -9,6 +9,9 @@ django-allauth>=65.0
 # Debug (development)
 django-debug-toolbar>=4.0
 
+# Lambda / API Gateway integration
+apig-wsgi>=2.18
+
 # OpenSearch sync
 opensearch-py>=2.4
 

@@ -54,3 +54,7 @@ nohup.out
 
 # Migrations (dynamo — keep these in source control)
 # dynamo_backend/migrations/*.json  # <-- intentionally tracked
+
+# Lambda build artifacts
+lambda_build/
+lambda_build.zip

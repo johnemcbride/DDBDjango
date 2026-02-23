@@ -4,10 +4,12 @@ services:
   localstack:
     image: localstack/localstack:3
     container_name: ddbdjango-localstack
+    privileged: true
     ports:
       - "4566:4566"       # LocalStack gateway (all services)
     environment:
-      - SERVICES=dynamodb,opensearch
+      - SERVICES=s3,iam,dynamodb,opensearch,lambda,apigateway
+      - PERSISTENCE=1
       - OPENSEARCH_ENDPOINT_STRATEGY=domain   # *.localhost.localstack.cloud → 127.0.0.1
       - DEBUG=0
       - DOCKER_HOST=unix:///var/run/docker.sock
