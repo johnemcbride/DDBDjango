@@ -71,7 +71,7 @@ lambda-redeploy:
 lambda-url:
 	@API_ID=$$(aws --endpoint-url=http://localhost:4566 --region=us-east-1 --no-cli-pager --output text \
 		apigateway get-rest-apis --query "items[?name=='ddbdjango'].id" 2>/dev/null | head -1); \
-	echo "http://localhost:4566/restapis/$${API_ID}/api/_user_request_"
+	echo "http://$${API_ID}.execute-api.localhost.localstack.cloud:4566/api/"
 
 clean:
 	rm -rf .venv

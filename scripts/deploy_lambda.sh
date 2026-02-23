@@ -208,12 +208,13 @@ else
 fi
 
 # ── 6. Print summary ──────────────────────────────────────────────────────
-URL="http://localhost:4566/restapis/${API_ID}/api/_user_request_"
+# LocalStack 3 uses subdomain-based routing for API Gateway
+URL="http://${API_ID}.execute-api.localhost.localstack.cloud:4566/api"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  ✓ Lambda deployed: $FUNCTION_NAME"
-echo "  ✓ Endpoint:        $URL"
+echo "  ✓ Endpoint:        $URL/"
 echo ""
 echo "  Test it:"
 echo "    curl $URL/"
