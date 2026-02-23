@@ -3,6 +3,12 @@ django>=6.0
 boto3>=1.34
 botocore>=1.34
 
+# Authentication
+django-allauth>=65.0
+
+# Debug (development)
+django-debug-toolbar>=4.0
+
 # OpenSearch sync
 opensearch-py>=2.4
 

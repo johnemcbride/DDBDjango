@@ -48,5 +48,23 @@ services:
       - "8080:8080"
     restart: unless-stopped
 
+  # ── dynamodb-admin ─────────────────────────────────────────────────────────
+  # Web UI for browsing and editing DynamoDB tables.
+  # Open http://localhost:8001
+  dynamodb-admin:
+    image: aaronshaf/dynamodb-admin
+    container_name: ddbdjango-dynamodb-admin
+    ports:
+      - "8001:8001"
+    environment:
+      - DYNAMO_ENDPOINT=http://localstack:4566
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+    depends_on:
+      localstack:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   localstack_data:

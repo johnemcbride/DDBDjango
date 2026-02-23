@@ -117,8 +117,7 @@ DATABASES = {
     },
 }
 
-# ── Legacy DYNAMO_BACKEND dict (kept for backward compat with old table utils)
-# New code should use DATABASES['default'] directly.
+# ── DYNAMO_BACKEND — used by dynamo_backend.connection (legacy connection helper)
 DYNAMO_BACKEND = {
     "ENDPOINT_URL": os.environ.get("DYNAMO_ENDPOINT_URL", "http://localhost:4566"),
     "REGION": os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),

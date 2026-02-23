@@ -8,19 +8,12 @@ required.  Integration tests (marked with @pytest.mark.integration) require
 LocalStack to be running via docker-compose.
 """
 
-import os
+# Set environment variables at MODULE IMPORT TIME (before any Django imports)
 import pytest
-
-# ──────────────────────────────────────────────────────────────── Django setup
-
+import os
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
-# Prevent DynamoBackendConfig.ready() from trying to reach AWS/LocalStack
-# before our moto mock is in place.
 os.environ["DYNAMO_SKIP_STARTUP"] = "1"
-os.environ["DYNAMO_ENDPOINT_URL"] = ""   # empty → None → let moto intercept
-
-import django
-django.setup()
+os.environ["DYNAMO_ENDPOINT_URL"] = ""  # empty → None → let moto intercept
 
 
 # ──────────────────────────────────────────────────────────── moto DynamoDB
@@ -56,29 +49,18 @@ def mock_dynamodb():
         # Create fresh resource in moto's in-memory context.
         reset_resource_cache()
 
-        from demo_app.models import (
-            Author, AuthorProfile,
-            Tag,
-            Category,
-            Post, PostCategory,
-            Comment,
-            PostRevision,
-        )
-        from django.contrib.auth.models import User
+        from django.apps import apps as django_apps
 
-        # All concrete models — explicit through table (PostCategory) is in the list.
-        # Post.labels.through is the auto-created M2M join table (Post ↔ Tag).
-        for model in (
-            Author, AuthorProfile,
-            Tag,
-            Category,
-            Post, PostCategory,
-            Comment,
-            PostRevision,
-            User,
-            Post.labels.through,   # auto M2M join table: demo_app_post_labels
-        ):
-            db_conn.creation.ensure_table(model)
+        # Create tables for all concrete managed models across all installed apps
+        # (mirrors what DynamoBackendConfig._ensure_all_tables does on startup).
+        for app_config in django_apps.get_app_configs():
+            for model in app_config.get_models(include_auto_created=True):
+                if model._meta.abstract or model._meta.proxy or not model._meta.managed:
+                    continue
+                try:
+                    db_conn.creation.ensure_table(model)
+                except Exception:
+                    pass
 
         yield
 

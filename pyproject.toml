@@ -55,7 +55,6 @@ packages = [
     "dynamo_backend.backends.dynamodb",
     "dynamo_backend.management",
     "dynamo_backend.management.commands",
-    "dynamo_backend.legacy",
 ]
 
 [tool.setuptools.package-data]
