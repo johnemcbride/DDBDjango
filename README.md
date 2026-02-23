@@ -1,16 +1,26 @@
 # DDBDjango
 
-A Django application with a **DynamoDB backend** — no relational DB required.
+A Django application with a **DynamoDB backend** and **OpenSearch integration** — no relational DB required.
 
 ## What's in the box
 
 | Path | Purpose |
 |---|---|
-| `dynamo_backend/` | The DynamoDB backend library (all-in-one) |
-| `demo_app/` | Blog demo (Author → Post → Comment) |
+| `dynamo_backend/` | The DynamoDB backend library with OpenSearch sync |
+| `demo_app/` | Full-featured blog demo with frontend templates |
 | `config/` | Django project settings & routing |
 | `tests/` | Unit + view test suite (moto) |
-| `docker-compose.yml` | LocalStack for local development |
+| `docker-compose.yml` | LocalStack + OpenSearch for local development |
+
+## ✨ Features
+
+- 🗄️ **DynamoDB Backend** - Use DynamoDB as your primary database
+- 🔍 **OpenSearch Integration** - Automatic syncing with full-text search
+- 🔐 **AWS Cognito Auth** - User authentication via Cognito (with mock support)
+- 🗂️ **Django Migrations** - Custom migration system for DynamoDB
+- 🎨 **Admin Panel** - Django admin with DynamoDB search capabilities
+- 📝 **Blog Demo** - Complete blog with authors, posts, comments, tags, and categories
+- 🧪 **Testing Suite** - Comprehensive tests with moto mocking
 
 ---
 
@@ -26,15 +36,17 @@ A Django application with a **DynamoDB backend** — no relational DB required.
 │               dynamo_backend library                  │
 │                                                       │
 │  DynamoModel ──► DynamoManager ──► DynamoQuerySet    │
-│       │                                    │          │
-│   fields.py                          connection.py   │
-│   table.py                          (boto3 resource) │
-└──────────────────────┬──────────────────────────────┘
-                       │
-          ┌────────────▼────────────┐
-          │   AWS DynamoDB          │
-          │   (or LocalStack 4566)  │
-          └─────────────────────────┘
+│       │              │                     │          │
+│   fields.py    opensearch_sync.py   connection.py   │
+│   table.py          │              (boto3 resource) │
+└───────┬─────────────┼──────────────┬────────────────┘
+        │             │              │
+        │             └──────────┐   │
+        │                        │   │
+┌───────▼────────────┐  ┌────────▼───▼────────┐
+│  OpenSearch        │  │   AWS DynamoDB      │
+│  (full-text search)│  │  (or LocalStack)    │
+└────────────────────┘  └─────────────────────┘
 ```
 
 ### Opinionated design decisions
@@ -72,7 +84,15 @@ python manage.py runserver
 
 Tables are created automatically on first startup.
 
-### 4. Try the API
+### 4. Try the application
+
+**Web Interface:**
+- Homepage: http://localhost:8000/
+- Post Explorer: http://localhost:8000/explorer/
+- Write Post: http://localhost:8000/write/
+- Admin Panel: http://localhost:8000/admin/
+
+**REST API:**
 
 ```bash
 # Create an author
@@ -88,6 +108,116 @@ curl -s -X POST http://localhost:8000/api/posts/ \
 # List posts
 curl -s http://localhost:8000/api/posts/ | python -m json.tool
 ```
+
+### 5. Seed sample data (optional)
+
+```bash
+python manage.py seed_posts
+```
+
+This creates sample authors, posts, comments, tags, and categories to explore the demo.
+
+---
+
+## OpenSearch Integration
+
+Models can be automatically synced to OpenSearch for full-text search capabilities.
+
+### Enable OpenSearch sync
+
+In your model, add `opensearch_sync = True`:
+
+```python
+from dynamo_backend import DynamoModel, CharField
+
+class Post(DynamoModel):
+    class Meta:
+        opensearch_sync = True  # Auto-sync to OpenSearch
+        opensearch_index = "posts"  # Optional custom index name
+    
+    title = CharField(max_length=200)
+    content = CharField()
+```
+
+### Configuration
+
+Add to `settings.py`:
+
+```python
+OPENSEARCH_CONFIG = {
+    'enabled': True,
+    'host': 'localhost',
+    'port': 9200,
+    'use_ssl': False,
+    'verify_certs': False,
+}
+```
+
+### Reindex all documents
+
+```bash
+python manage.py opensearch_reindex
+```
+
+### Search API
+
+```bash
+# Search posts
+curl "http://localhost:8000/api/posts/search/?q=django"
+```
+
+---
+
+## Migrations
+
+DDBDjango includes a custom migration system for DynamoDB schema evolution.
+
+### Create migrations
+
+```bash
+python manage.py dmakemigrations
+```
+
+### Apply migrations
+
+```bash
+python manage.py dmigrate
+```
+
+Migrations support:
+- Adding/removing fields
+- Creating/deleting tables
+- Adding/removing GSI indexes
+- Field type changes
+
+---
+
+## AWS Cognito Authentication
+
+The demo app includes AWS Cognito integration with a mock server for local development.
+
+### Setup Cognito (local mock)
+
+```bash
+python manage.py setup_cognito
+```
+
+This creates a mock Cognito URL at http://localhost:8000/cognito/
+
+### Configuration
+
+```python
+COGNITO_CONFIG = {
+    'user_pool_id': 'local',
+    'client_id': 'local-client',
+    'region': 'us-east-1',
+    'mock_mode': True,  # Use mock server for local dev
+}
+```
+
+### Production setup
+
+For production, set `mock_mode: False` and configure real Cognito credentials.
 
 ---
 
@@ -206,6 +336,32 @@ DYNAMO_BACKEND = {
 
 ---
 
+## Admin Panel
+
+DDBDjango includes a custom Django admin integration with advanced search via OpenSearch.
+
+### Register models
+
+```python
+from django.contrib import admin
+from dynamo_backend.admin import DynamoModelAdmin
+from .models import Post
+
+@admin.register(Post)
+class PostAdmin(DynamoModelAdmin):
+    list_display = ['title', 'author_pk', 'published', 'created_at']
+    list_filter = ['published']
+    search_fields = ['title', 'content']  # Uses OpenSearch if enabled
+```
+
+### Access admin
+
+1. Create superuser: Configure via Cognito or use mock auth
+2. Navigate to http://localhost:8000/admin/
+3. Use the DynamoDB-powered admin interface
+
+---
+
 ## REST endpoints
 
 ### Authors
@@ -221,6 +377,7 @@ DYNAMO_BACKEND = {
 | Method | URL | Description |
 |---|---|---|
 | GET | `/api/posts/` | List posts (optional `?author_pk=`) |
+| GET | `/api/posts/search/?q=<query>` | Search posts (requires OpenSearch) |
 | POST | `/api/posts/` | Create post |
 | GET | `/api/posts/<pk>/` | Get post + comments (increments view count) |
 | PUT | `/api/posts/<pk>/` | Update post |
@@ -231,3 +388,71 @@ DYNAMO_BACKEND = {
 |---|---|---|
 | POST | `/api/posts/<pk>/comments/` | Add comment to post |
 | DELETE | `/api/comments/<pk>/` | Delete comment |
+
+### Tags & Categories
+| Method | URL | Description |
+|---|---|---|
+| GET | `/api/tags/` | List all tags |
+| GET | `/api/categories/` | List all categories |
+
+### Frontend Pages
+| URL | Description |
+|---|---|
+| `/` | Homepage with recent posts |
+| `/explorer/` | Browse all posts, tags, categories |
+| `/write/` | Create a new post |
+| `/post/<slug>/` | View post details |
+| `/author/<pk>/` | View author profile |
+| `/tag/<pk>/` | View posts by tag |
+| `/category/<pk>/` | View posts by category |
+
+---
+
+## Contributing & Development
+
+### Project Structure
+
+- **dynamo_backend/** - Core library
+  - `models.py` - DynamoModel base class
+  - `fields.py` - Field types
+  - `queryset.py` - Query API
+  - `manager.py` - Model manager
+  - `opensearch_sync.py` - OpenSearch integration
+  - `migration_*.py` - Migration system
+  - `admin.py` - Admin integration
+  - `backends/dynamodb/` - Database backend
+
+- **demo_app/** - Example application
+  - `models.py` - Blog models (Author, Post, Comment, etc.)
+  - `views.py` - REST API views
+  - `frontend_views.py` - Template views
+  - `templates/` - HTML templates
+  - `management/commands/` - Management commands
+
+### Running the full stack
+
+```bash
+# Start all services
+docker-compose up -d
+
+# Run migrations
+python manage.py dmigrate
+
+# Seed data
+python manage.py seed_posts
+
+# Start server
+python manage.py runserver
+```
+
+---
+
+## License
+
+MIT
+
+---
+
+## Credits
+
+Built with Django, DynamoDB, and OpenSearch.
