@@ -336,6 +336,67 @@ def _dynamo_safe(value):
     return value
 
 
+def _is_db_expression(value) -> bool:
+    """Return True if value is a Django DB expression (not a concrete Python value)."""
+    try:
+        from django.db.models.expressions import BaseExpression
+        return isinstance(value, BaseExpression)
+    except ImportError:
+        return False
+
+
+def _eval_db_expr(expr, item: dict):
+    """Evaluate a Django DB expression against a DynamoDB item dict (Python values).
+
+    Handles common text functions (Lower, Upper, Trim) as well as Col and Value
+    references.  Raises NotImplementedError for unsupported expression types.
+    """
+    from django.db.models.expressions import Col, Value
+
+    if isinstance(expr, Value):
+        return expr.value
+
+    if isinstance(expr, Col):
+        return item.get(expr.target.attname)
+
+    # ── Text functions ──────────────────────────────────────────────────────
+    try:
+        from django.db.models.functions.text import Lower, Upper, Trim, LTrim, RTrim
+    except ImportError:
+        Lower = Upper = Trim = LTrim = RTrim = None
+
+    def _inner(e):
+        return _eval_db_expr(e.source_expressions[0], item)
+
+    if Lower is not None and isinstance(expr, Lower):
+        v = _inner(expr)
+        return str(v).lower() if v is not None else None
+    if Upper is not None and isinstance(expr, Upper):
+        v = _inner(expr)
+        return str(v).upper() if v is not None else None
+    if Trim is not None and isinstance(expr, Trim):
+        v = _inner(expr)
+        return str(v).strip() if v is not None else None
+    if LTrim is not None and isinstance(expr, LTrim):
+        v = _inner(expr)
+        return str(v).lstrip() if v is not None else None
+    if RTrim is not None and isinstance(expr, RTrim):
+        v = _inner(expr)
+        return str(v).rstrip() if v is not None else None
+
+    # ── Generic fallback: evaluate first source expression ──────────────────
+    src = getattr(expr, "source_expressions", None)
+    if src:
+        try:
+            return _eval_db_expr(src[0], item)
+        except Exception:
+            pass
+
+    raise NotImplementedError(
+        f"Cannot evaluate expression {type(expr).__name__!r} natively for DynamoDB"
+    )
+
+
 # Lookups that DynamoDB cannot express natively (no case-insensitive ops).
 # These are handled entirely in Python after the scan.
 _PYTHON_ONLY_LOOKUPS = frozenset({"iexact", "icontains", "istartswith", "iendswith"})
@@ -534,6 +595,11 @@ def _build_filter_expression(conditions: list, model):
     has_empty_in = False
 
     for col, lookup_name, value, negated in conditions:
+        # Skip conditions whose RHS is a Django DB expression — they cannot be
+        # serialised as DynamoDB ExpressionAttributeValues.  The caller
+        # (SQLUpdateCompiler) applies them in Python after the scan.
+        if _is_db_expression(value):
+            continue
         cond = _lookup_to_cond(col, lookup_name, value)
         if cond is None:  # empty IN
             has_empty_in = True
@@ -545,6 +611,59 @@ def _build_filter_expression(conditions: list, model):
     if has_empty_in and expr is None:
         return None, True
     return expr, False
+
+
+def _extract_having_conditions(query, ann_index: dict) -> list:
+    """Extract WHERE conditions that reference annotation names (HAVING equivalents).
+
+    Returns a list of (ann_index, lookup_name, rhs_value) triples.
+    """
+    results = []
+    ann_names = set(ann_index.keys())
+    if not hasattr(query, "where") or query.where is None:
+        return results
+
+    def walk(node):
+        for child in getattr(node, "children", []):
+            if hasattr(child, "children"):
+                walk(child)
+            elif hasattr(child, "lhs") and hasattr(child, "lookup_name"):
+                lhs = child.lhs
+                # Ref node (Django 4+): lhs.refs holds the annotation name
+                ref_name = getattr(lhs, "refs", None)
+                if ref_name is None:
+                    # Older form: lhs.name
+                    ref_name = getattr(lhs, "name", None)
+                if ref_name in ann_names:
+                    results.append((ann_index[ref_name], child.lookup_name, child.rhs))
+
+    walk(query.where)
+    return results
+
+
+def _row_passes_having(row: tuple, having: list) -> bool:
+    """Return True if a GROUP BY row satisfies all HAVING conditions."""
+    for idx, op, val in having:
+        row_val = row[idx]
+        if op in ("exact", "iexact"):
+            if row_val != val:
+                return False
+        elif op == "gt":
+            if not (row_val > val):
+                return False
+        elif op == "gte":
+            if not (row_val >= val):
+                return False
+        elif op == "lt":
+            if not (row_val < val):
+                return False
+        elif op == "lte":
+            if not (row_val <= val):
+                return False
+        elif op == "in":
+            if row_val not in val:
+                return False
+    return True
 
 
 # ──────────────────────────────────── result field list & row building
@@ -1188,6 +1307,9 @@ class SQLCompiler(BaseSQLCompiler):
 
         # COUNT aggregate (non-M2M queries)
         if self.query.annotations and m2m is None:
+            # values().annotate(Count()) → Python GROUP BY path
+            if self.query.group_by:
+                return self._execute_values_aggregate(result_type)
             return self._execute_aggregate(result_type)
 
         # Populate self.select, self.klass_info, self.annotation_col_map
@@ -1305,6 +1427,76 @@ class SQLCompiler(BaseSQLCompiler):
                                    where_node=self.query.where)
         row = (count,)
         return row if result_type == SINGLE else [[row]]
+
+    def _execute_values_aggregate(self, result_type):
+        """Handle .values(fields).annotate(Count(...)) GROUP BY queries in Python.
+
+        Django expects each row to be a tuple with:
+          (annotation_value_1, ..., groupby_value_1, ...)
+        matching the order implied by
+          names = list(extra_select) + list(annotation_select) + list(values_select)
+        Note: extra_select is almost always empty for annotation queries.
+        """
+        from collections import defaultdict
+        from django.db.models.aggregates import Count as CountAgg
+
+        model = self.query.model
+        pk_value, pk_values, conditions = _parse_where(self.query)
+
+        if pk_value is not None:
+            items = _do_get_item(self.connection, model, pk_value)
+        elif pk_values is not None:
+            items = _do_batch_get(self.connection, model, pk_values)
+        else:
+            items = _do_scan(
+                self.connection, model, conditions, where_node=self.query.where
+            )
+
+        # ── Groupby column attnames ───────────────────────────────────────────
+        values_select = list(self.query.values_select)  # e.g. ["user"]
+        groupby_attnames = []
+        for col_name in values_select:
+            try:
+                field = model._meta.get_field(col_name)
+                groupby_attnames.append(field.attname)
+            except Exception:
+                groupby_attnames.append(col_name)
+
+        # ── Annotation names (in select_order) ───────────────────────────────
+        annotation_names = list(self.query.annotation_select)  # e.g. ["user__count"]
+        annotation_exprs = {n: self.query.annotation_select[n] for n in annotation_names}
+
+        # ── Group items ───────────────────────────────────────────────────────
+        groups: dict = defaultdict(list)
+        for item in items:
+            key = tuple(item.get(att) for att in groupby_attnames)
+            groups[key].append(item)
+
+        # ── Build rows ────────────────────────────────────────────────────────
+        rows = []
+        for key, group_items in groups.items():
+            ann_vals = []
+            for ann_name in annotation_names:
+                ann_expr = annotation_exprs[ann_name]
+                if isinstance(ann_expr, CountAgg):
+                    ann_vals.append(len(group_items))
+                else:
+                    ann_vals.append(None)  # unsupported annotation type
+            rows.append(tuple(ann_vals) + key)
+
+        # ── Python HAVING-style filter on annotation values ───────────────────
+        ann_index = {name: i for i, name in enumerate(annotation_names)}
+        having = _extract_having_conditions(self.query, ann_index)
+        if having:
+            filtered = []
+            for row in rows:
+                if _row_passes_having(row, having):
+                    filtered.append(row)
+            rows = filtered
+
+        if result_type == SINGLE:
+            return rows[0] if rows else None
+        return [rows]  # MULTI
 
     def has_results(self):
         """Used by QuerySet.exists()."""
@@ -1452,9 +1644,52 @@ class SQLUpdateCompiler(BaseSQLUpdateCompiler):
         else:
             items = _do_scan(self.connection, model, conditions)
 
+        # ── Python-side filtering for expression RHS conditions ─────────────
+        # _build_filter_expression already skipped these so they weren't sent
+        # to DynamoDB; apply them here as Python equality checks.
+        from django.db.models.expressions import BaseExpression
+
+        expr_conditions = [
+            (col, op, val, neg)
+            for col, op, val, neg in conditions
+            if isinstance(val, BaseExpression)
+        ]
+        if expr_conditions:
+            filtered = []
+            for item in items:
+                keep = True
+                for col, op, val, neg in expr_conditions:
+                    try:
+                        evaluated = _eval_db_expr(val, item)
+                    except NotImplementedError:
+                        continue  # can't evaluate — assume condition passes
+                    item_val = item.get(col)
+                    if op in ("exact", "iexact"):
+                        match = item_val == evaluated
+                    elif op == "isnull":
+                        match = (item_val is None) if evaluated else (item_val is not None)
+                    else:
+                        # Unsupported comparison — let it pass
+                        match = True
+                    if neg:
+                        match = not match
+                    if not match:
+                        keep = False
+                        break
+                if keep:
+                    filtered.append(item)
+            items = filtered
+
         updated = 0
         for item in items:
             for field, _model_cls, value in self.query.values:
+                # Evaluate Django DB expressions (e.g. Lower("email")) against
+                # the current item before converting to a DynamoDB value.
+                if isinstance(value, BaseExpression):
+                    try:
+                        value = _eval_db_expr(value, item)
+                    except NotImplementedError:
+                        continue  # skip unsupported expression transforms
                 # Use Python-level value directly — do not call get_db_prep_save
                 # which applies SQL-specific conversions (e.g. UUID → hex string).
                 converted = _to_dynamo_value(field, value)
